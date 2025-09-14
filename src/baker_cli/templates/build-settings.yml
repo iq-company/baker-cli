@@ -1,0 +1,38 @@
+# Registry/Owner mit ENV-Fallbacks
+registry: ${env("REGISTRY","ghcr.io")}
+owner: ${env("OWNER", env("GITHUB_REPOSITORY_OWNER",""))}
+
+platforms: ["linux/amd64"]
+push: false
+check: auto  # auto|local|remote
+
+hash:
+  tag_length: 8
+
+# Basis-Targets für drei Varianten: base, dev, release
+# Dockerfiles liegen unter docker/<variant>/Dockerfile
+
+targets:
+  base:
+    dockerfile: docker/base/Dockerfile
+    context: .
+    deps: []
+    hash_mode: self
+    image: example-base
+    latest: true
+
+  dev:
+    dockerfile: docker/dev/Dockerfile
+    context: .
+    deps: [base]
+    hash_mode: self
+    image: example-dev
+    latest: true
+
+  release:
+    dockerfile: docker/release/Dockerfile
+    context: .
+    deps: [base]
+    hash_mode: self+deps
+    image: example-release
+    latest: true

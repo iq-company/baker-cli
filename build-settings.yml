@@ -1,0 +1,59 @@
+# ---- Registry/Owner mit ENV-Fallbacks -------------------------
+# env(NAME, default) liest Umgebungsvariablen (auch im CI).
+registry: ${env("REGISTRY","")}
+owner: ${env("OWNER", env("GITHUB_REPOSITORY_OWNER",""))}
+
+platforms: ["linux/amd64"]
+push: false
+check: auto # auto|local|remote
+
+# ---- Targets ---------------------------------------------------
+# Funktionen im tag-Expression:
+#  - env("VAR","def")                  -> ENV
+#  - readFile("path")                  -> Dateiinhalt (stripped)
+#  - checksum("path1","path2",...)     -> sha256 von Datei-Inhalten
+#  - currentChecksum()                 -> Hash laut hash_mode des Targets (self oder self+deps)
+#  - concat(a,b,...)                   -> String-Verkettung
+#  - depChecksum("targetName")         -> Hash (laut hash_mode) eines anderen Targets
+#  - gitShortSha()                     -> `git rev-parse --short HEAD` (falls git da)
+# Ergebnis wird zu einem Docker-Tag normalisiert ([A-Za-z0-9_.-], sonst -> '-')
+#
+# tag interpolations:
+# tag: ${readFile("container-version.txt")}
+# tag: ${readFile("container-version.txt")}-${currentChecksum()}
+# tag: ${env("REL_TAG","dev")}-${gitShortSha()}
+# tag: ${depChecksum("builder-ui")}-${currentChecksum()}
+# tag: ${depChecksum8("builder-ui")}-${currentChecksum8()}
+
+targets:
+  conductor-src:
+    dockerfile: Dockerfile.src
+    context: .
+    deps: []
+    hash_mode: self
+    image: conductor-src
+    latest: true
+
+  builder-sqlite:
+    dockerfile: sqlite/Dockerfile
+    context: .
+    deps: [conductor-src]
+    hash_mode: self
+    image: builder-sqlite
+    latest: true
+
+  builder-ui:
+    dockerfile: ui/Dockerfile
+    context: .
+    deps: [conductor-src]
+    hash_mode: self
+    image: builder-ui
+    latest: true
+
+  cond-sqlite:
+    dockerfile: Dockerfile.sqlite
+    context: .
+    deps: [builder-ui, builder-sqlite]
+    hash_mode: self+deps
+    image: cond-sqlite
+    latest: true
