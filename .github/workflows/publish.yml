@@ -24,13 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          VERSION=$(python - <<'PY'
-import tomllib
-with open('pyproject.toml','rb') as f:
-    data = tomllib.load(f)
-print(data['project']['version'])
-PY
-)
+          VERSION=$(python -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
           if [ "${TAG#v}" != "$VERSION" ]; then
             echo "Tag ${TAG} stimmt nicht mit Version ${VERSION} aus pyproject.toml überein." >&2
             exit 1
