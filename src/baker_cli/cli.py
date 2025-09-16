@@ -229,6 +229,11 @@ def image_add_cmd(
 	typer.echo(f"Image '{pname}' added. Dockerfile: {df_path}")
 
 
+@app.command("version", help="Show the version of the baker-cli")
+def version_cmd():
+	from . import __version__
+
+	typer.echo(f"baker-cli version {__version__}")
 
 def main(argv: List[str] | None = None) -> None:
 	app()
