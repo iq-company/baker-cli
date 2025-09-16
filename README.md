@@ -39,42 +39,61 @@ A small, pragmatic Python CLI that controls your Docker build cascades **uniform
 
 ## Quickstart
 
+### 1) Installation (pip/pipx)
+
 ```bash
-# 1) Dependencies
-pip install pyyaml
+# Mit pip
+pip install baker-cli
 
-# 2) Show plan (check locally, without push)
-python baker.py --settings build-settings.yml plan --check local --push=off --targets cascade-base
+# Oder mit pipx (empfohlen für globale CLIs)
+pipx install baker-cli
 
-# 3) Build (locally, without push)
-python baker.py --settings build-settings.yml build --check local --push=off --targets cascade-base
+# Projekt initialisieren (aktuelles Verzeichnis oder Zielordner)
+baker init
+# oder
+baker init ./mein-projekt
+```
 
-# 4) Build and push to registry
-python baker.py --settings build-settings.yml build --check registry --push=on --targets cascade-base
+### 2) Entwicklung (lokal, .venv)
+
+```bash
+# Virtuelle Umgebung anlegen
+python -m venv .venv
+source .venv/bin/activate
+
+# Projekt lokal installieren (editable)
+pip install -U pip
+pip install -e .
+
+# Projekt initialisieren (falls noch nicht vorhanden)
+baker init
+
+# Optional: CI-Workflow generieren
+baker ci --settings build-settings.yml
+
+# Beispiel: Plan & Build
+baker plan --settings build-settings.yml --check local --targets base
+baker build --settings build-settings.yml --check remote --push --targets base
 ```
 
 ---
 
 ## Prerequisites
 
-* **Python 3.7+**
+* **Python 3.11+**
 * **Docker** (with `buildx` plugin)
-* **PyYAML** (`pip install pyyaml`)
 
 ---
 
 ## Repository Layout
 
 ```
-conductor/
+demo/                           # Project name
 ├── build-settings.yml          # Build configuration
-├── baker.py                    # CLI script
-├── Dockerfile.sqlite           # SQLite variant
-├── Dockerfile.src              # Source variant
-├── sqlite/
-│   └── Dockerfile              # SQLite-specific Dockerfile
-└── ui/
-    └── Dockerfile              # UI-specific Dockerfile
+├── sqlite/                     # Sample Stage "sqlite"
+│   └── Dockerfile              # Related Dockerfile
+└── ui/                         # Sample Stage "ui"
+    └── Dockerfile              # Related Dockerfile
 ```
 
 ---

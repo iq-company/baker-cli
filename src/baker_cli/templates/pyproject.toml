@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baker-setup"
+version = "0.0.1"
+description = "Baker setup repository"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "baker-cli>=0.1.0",
+]
+
+[project.scripts]
+# Optional: expose a local convenience script name if needed
+# baker = "baker_cli.__main__:main"

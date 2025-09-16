@@ -370,7 +370,7 @@ def image_ref(settings: dict, tname: str, tag: str) -> str:
 		parts.append(own)
 	parts.append(img)
 
-	repo = "/".join(parts)				# z.B. "builder-ui" oder "ghcr.io/owner/builder-ui"
+	repo = "/".join(parts)				# z.B. "baker-ui" oder "ghcr.io/owner/baker-ui"
 	repo = re.sub(r"/{2,}", "/", repo).lstrip("/")
 
 	return f"{repo}:{tag}"

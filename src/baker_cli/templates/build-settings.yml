@@ -1,5 +1,5 @@
 # Registry/Owner mit ENV-Fallbacks
-registry: ${env("REGISTRY","ghcr.io")}
+registry: ${env("REGISTRY","")}
 owner: ${env("OWNER", env("GITHUB_REPOSITORY_OWNER",""))}
 
 platforms: ["linux/amd64"]

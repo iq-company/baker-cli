@@ -19,6 +19,7 @@ DEFAULT_SETTINGS = {
 	"builder": "",
 	"namespace_prefix": "",
 	"hash": { "tag_length": 8 },
+	"args": { "dep_arg_prefix": "IMAGE_BAKER_" },
 }
 
 # ---------- subprocess helpers ----------
@@ -172,10 +173,12 @@ def load_settings(path: str|None) -> dict:
 			raise ValueError("settings file must be a mapping at top level.")
 	# first-pass interpolate (for registry/owner/etc.)
 	raw = deep_interpolate(raw)
-	# Deep-merge hash settings
-	s.update({k:v for k,v in raw.items() if k != "hash"})
+	# Deep-merge nested sections
+	s.update({k:v for k,v in raw.items() if k not in ("hash","args")})
 	if "hash" in raw:
 		s["hash"] = { **DEFAULT_SETTINGS["hash"], **(raw.get("hash") or {}) }
+	if "args" in raw:
+		s["args"] = { **DEFAULT_SETTINGS.get("args", {}), **(raw.get("args") or {}) }
 
 	# env overrides for registry/owner remain possible
 	s["registry"] = os.getenv("REGISTRY", s.get("registry"))
@@ -396,13 +399,14 @@ def gen_hcl(settings: dict, primary_tags: dict[str,str], all_tags_map: dict[str,
 	targets = settings["targets"]
 	subset = targets_subset or list(targets.keys())
 	out = []
+	dep_prefix = (settings.get("args") or {}).get("dep_arg_prefix", "IMAGE_BAKER_")
 
 	for tname in subset:
 		t = targets[tname]
 		# Auto-Args mit Primär-Tag der Deps
 		auto_args = {}
 		for dep in t.get("deps", []):
-			key = f"IMAGE_{dep.replace('-','_').upper()}"
+			key = f"{dep_prefix}{dep.replace('-','_').upper()}"
 			auto_args[key] = image_ref(settings, dep, primary_tags[dep])
 
 		user_args = t.get("build_args", {}) or {}
@@ -451,7 +455,7 @@ def plan(settings, args, selected_override=None):
 
 		decisions[n] = {
 			"primary_tag": primary_tags[n],
-			"all_tags": all_tags[n],		  # ← zum Anzeigen nützlich
+			"all_tags": all_tags[n],
 			"ref": ref,
 			"exists": exists,
 			"reason": reason,
@@ -549,7 +553,8 @@ def core_main(argv: list[str] | None = None):
 	tgt_opts(p_build)
 
 	args = ap.parse_args(argv)
-	settings = load_settings(args.settings)
+	s_settings = load_settings(args.settings)
+	settings = s_settings
 
 	# apply --set overrides
 	for ov in args.overrides:
@@ -557,7 +562,7 @@ def core_main(argv: list[str] | None = None):
 			raise SystemExit(f"--set expects key=value, got: {ov}")
 		k, v = ov.split("=", 1)
 		set_deep(settings, k.strip(), v)
-	s.settings = coerce_bools(settings) if (settings := coerce_bools(settings)) else settings
+	settings = coerce_bools(settings)
 
 	selected = select_targets(settings, args.targets)
 	selected, primary_tags, all_tags_map, to_build, decisions = plan(settings, args, selected_override=selected)
@@ -566,7 +571,7 @@ def core_main(argv: list[str] | None = None):
 		if args.print_env:
 			for n in selected:
 				envname = f"TAG_{n.replace('-','_').upper()}"
-				print(f"{envname}={decisions[n]['tag']}")
+				print(f"{envname}={decisions[n]['primary_tag']}")
 
 		if args.json:
 			print(json.dumps({"selected": selected, "decisions": decisions}, indent=2))

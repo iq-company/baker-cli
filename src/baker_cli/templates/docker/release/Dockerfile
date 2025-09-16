@@ -1,5 +1,5 @@
-ARG IMAGE_BUILDER_DEV=builder-dev:latest
-FROM ${IMAGE_BUILDER_DEV} AS dev
+ARG IMAGE_BAKER_DEV=dev:latest
+FROM ${IMAGE_BAKER_DEV} AS dev
 
 FROM alpine:3.20
 

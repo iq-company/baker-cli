@@ -1,12 +1,28 @@
-import argparse
 import sys
 from pathlib import Path
 import shutil
 import os
 import yaml
+import typer
+from typing import List, Optional
 from importlib.resources import files as pkg_files
+from jinja2 import Environment, BaseLoader
 
 from . import core
+
+
+app = typer.Typer(add_completion=False, help="baker-cli")
+image_app = typer.Typer(add_completion=False, help="Add a new image target")
+app.add_typer(image_app, name="image")
+
+# Unterstützte CI-Provider und ihre Templates/Standard-Ausgabeorte
+CI_PIPELINES = {
+	"gh": {
+		"template": ("ci", "github-actions.yml.j2"),
+		"default_output": ".github/workflows/baker.yml",
+		"label": "GitHub Actions",
+	},
+}
 
 
 def copy_tree(src: Path, dst: Path) -> None:
@@ -21,96 +37,14 @@ def copy_tree(src: Path, dst: Path) -> None:
 				shutil.copy2(src_f, dst_f)
 
 
-def cmd_init(args: argparse.Namespace) -> int:
-	"""Initialisiert ein Projekt mit Templates."""
-	target = Path(args.target or ".").resolve()
-	templates_dir = Path(pkg_files("baker_cli") / "templates")
-	copy_tree(templates_dir, target)
-	print(f"Initialized templates in {target}")
-	if args.ci:
-		return cmd_ci(argparse.Namespace(settings=str(target / "build-settings.yml"), output=str(target / ".github/workflows/baker.yml")))
-	return 0
-
-
-def read_settings(path: Path) -> dict:
-	with path.open("r", encoding="utf-8") as f:
-		data = yaml.safe_load(f) or {}
-	if not isinstance(data, dict) or "targets" not in data:
-		raise SystemExit("Invalid build-settings.yml: 'targets' missing")
-	return data
-
-
-def generate_github_actions_yaml(settings: dict) -> str:
-	targets = list((settings.get("targets") or {}).keys())
-	if not targets:
-		raise SystemExit("No targets defined in settings")
-	registry = (settings.get("registry") or "ghcr.io").strip() or "ghcr.io"
-	yaml_lines = [
-		"name: Baker Build and Push",
-		"",
-		"on:",
-		"  push:",
-		"    branches: [ main ]",
-		"  pull_request:",
-		"    branches: [ main ]",
-		"",
-		"jobs:",
-		"  build:",
-		"    runs-on: ubuntu-latest",
-		"    permissions:",
-		"      contents: read",
-		"      packages: write",
-		"    env:",
-		f"      REGISTRY: {registry}",
-		"      OWNER: \${{ github.repository_owner }}",
-		"    strategy:",
-		"      fail-fast: false",
-		"      matrix:",
-		"        target:",
-		*[f"          - {t}" for t in targets],
-		"    steps:",
-		"      - uses: actions/checkout@v4",
-		"      - name: Set up QEMU",
-		"        uses: docker/setup-qemu-action@v3",
-		"      - name: Set up Docker Buildx",
-		"        uses: docker/setup-buildx-action@v3",
-		"      - name: Log in to Registry",
-		"        uses: docker/login-action@v3",
-		"        with:",
-		"          registry: \${{ env.REGISTRY }}",
-		"          username: \${{ github.actor }}",
-		"          password: \${{ secrets.GITHUB_TOKEN }}",
-		"      - name: Set up Python",
-		"        uses: actions/setup-python@v5",
-		"        with:",
-		"          python-version: '3.x'",
-		"      - name: Install baker-cli",
-		"        run: pip install baker-cli",
-		"      - name: Build",
-		"        run: baker build --check remote --push --targets \${{ matrix.target }}",
-	]
-	return "\n".join(yaml_lines) + "\n"
-
-
-def cmd_ci(args: argparse.Namespace) -> int:
-	settings_path = Path(args.settings or "build-settings.yml")
-	settings = read_settings(settings_path)
-	out_yaml = generate_github_actions_yaml(settings)
-	out_path = Path(args.output or ".github/workflows/baker.yml")
-	out_path.parent.mkdir(parents=True, exist_ok=True)
-	out_path.write_text(out_yaml, encoding="utf-8")
-	print(f"Wrote GitHub Actions workflow to {out_path}")
-	return 0
-
-# ---------------- image add ----------------
-
 def _sanitize_name(name: str) -> str:
 	s = name.strip().lower()
 	s = s.replace(" ", "-")
 	s = "".join(ch for ch in s if (ch.isalnum() or ch in "-_."))
 	s = s.strip("-._")
 	if not s:
-		raise SystemExit("Ungültiger Name für Image")
+		typer.echo("Ungültiger Name für Image", err=True)
+		raise typer.Exit(code=2)
 	return s
 
 
@@ -118,9 +52,8 @@ def _dep_var_name(dep: str) -> str:
 	return f"IMAGE_{dep.replace('-', '_').upper()}"
 
 
-def _dockerfile_for_image(name: str, deps: list[str], base_image: str | None) -> str:
+def _dockerfile_for_image(name: str, deps: List[str], base_image: str | None) -> str:
 	lines = []
-	# ARGs mit Defaults; Buildx setzt diese per Auto-Args im HCL
 	for d in deps:
 		var = _dep_var_name(d)
 		lines.append(f"ARG {var}=builder-{d}:latest")
@@ -135,116 +68,167 @@ def _dockerfile_for_image(name: str, deps: list[str], base_image: str | None) ->
 	return "\n".join(lines) + "\n"
 
 
-def cmd_image_add(args: argparse.Namespace) -> int:
-	settings_path = Path(args.settings or "build-settings.yml")
-	if not settings_path.exists():
-		raise SystemExit(f"Settings-Datei nicht gefunden: {settings_path}")
+def _read_settings(path: Path) -> dict:
+	with path.open("r", encoding="utf-8") as f:
+		data = yaml.safe_load(f) or {}
+	if not isinstance(data, dict) or "targets" not in data:
+		raise typer.Exit(code=2)
+	return data
 
-	name = _sanitize_name(args.name)
-	deps: list[str] = []
-	for item in (args.dep or []):
+
+def load_template(section: str, name: str) -> str:
+	res = pkg_files("baker_cli").joinpath("templates", section, name)
+	return res.read_text(encoding="utf-8")
+
+
+def _compute_leaf_targets(settings: dict) -> List[str]:
+	tdefs = settings.get("targets") or {}
+	all_names = set(tdefs.keys())
+	dep_names = set()
+	for t in tdefs.values():
+		for d in (t.get("deps") or []):
+			dep_names.add(d)
+	leafs = sorted(all_names - dep_names)
+	return leafs or sorted(all_names)
+
+
+def _render_ci(settings: dict, provider: str) -> str:
+	if provider not in CI_PIPELINES:
+		allowed = ", ".join(sorted(CI_PIPELINES.keys()))
+		typer.echo(f"Unbekannter CI-Provider '{provider}'. Erlaubt: {allowed}", err=True)
+		raise typer.Exit(code=2)
+
+	leaf_targets = _compute_leaf_targets(settings)
+	if not leaf_targets:
+		raise typer.Exit(code=2)
+	registry = (settings.get("registry") or "ghcr.io").strip() or "ghcr.io"
+
+	section, name = CI_PIPELINES[provider]["template"]
+	jinja_src = load_template(section, name)
+	# Keine Trimmung: Zeilenumbrüche exakt erhalten
+	env = Environment(loader=BaseLoader(), autoescape=False, keep_trailing_newline=True)
+	tmpl = env.from_string(jinja_src)
+	return tmpl.render(registry=registry, targets=leaf_targets)
+
+
+@app.command("init", help="Initialize a new baker project")
+def init_cmd(
+	target: Optional[str] = typer.Argument(None, help="Zielordner (default: cwd)"),
+):
+	target_path = Path(target or ".").resolve()
+	templates_root = Path(pkg_files("baker_cli") / "templates")
+	# Projekt-Templates kopieren (ohne CI-Vorlagen)
+	files_to_copy = [
+		templates_root / "build-settings.yml",
+		# zusätzliche Hilfsdateien, falls nicht vorhanden
+		templates_root / "README.md",
+		templates_root / "pyproject.toml",
+	]
+	dirs_to_copy = [
+		templates_root / "docker",
+	]
+	for fp in files_to_copy:
+		if fp.exists():
+			target_path.mkdir(parents=True, exist_ok=True)
+			out = target_path / fp.name
+			if not out.exists():
+				shutil.copy2(fp, out)
+	for dp in dirs_to_copy:
+		if dp.exists():
+			copy_tree(dp, target_path / dp.name)
+
+	typer.echo(f"Initialized templates in {target_path}")
+
+
+@app.command("ci", help="Generate a CI workflow Pipeline for a specific CI provider")
+def ci_cmd(
+	provider: str = typer.Argument(..., help="CI-Provider (z.B. 'gh' für GitHub Actions)"),
+	settings: str = typer.Option("build-settings.yml", "--settings"),
+	output: Optional[str] = typer.Option(None, "--output"),
+):
+	settings_path = Path(settings)
+	data = _read_settings(settings_path)
+	out_yaml = _render_ci(data, provider)
+	# Default-Ausgabe abhängig vom Provider
+	default_out = CI_PIPELINES.get(provider, {}).get("default_output", "baker-ci.yml")
+	out_path = Path(output or default_out)
+	out_path.parent.mkdir(parents=True, exist_ok=True)
+	out_path.write_text(out_yaml, encoding="utf-8")
+	label = CI_PIPELINES.get(provider, {}).get("label", provider)
+	typer.echo(f"Wrote {label} workflow to {out_path}")
+
+
+# Delegation an Core (rohe Argumente durchreichen)
+@app.command("plan", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Show the plan and what would build")
+def plan_cmd(ctx: typer.Context):
+	core.core_main(["plan", *ctx.args])
+
+
+@app.command("gen-hcl", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Generate a docker-bake.hcl file from the build-settings.yml for debugging purposes")
+def gen_hcl_cmd(ctx: typer.Context):
+	core.core_main(["gen-hcl", *ctx.args])
+
+
+@app.command("build", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Build the Docker images")
+def build_cmd(ctx: typer.Context):
+	core.core_main(["build", *ctx.args])
+
+
+@image_app.command("add", help="Add a new image target")
+def image_add_cmd(
+	name: str = typer.Argument(..., help="Name of the image (e.g. release)"),
+	dep: List[str] = typer.Option([], "--dep", help="Dependencies, multiple or comma-separated"),
+	image: Optional[str] = typer.Option(None, "--image", help="Base image (e.g. alpine:3)"),
+	settings: str = typer.Option("build-settings.yml", "--settings", help="Path to the settings YAML"),
+	force: bool = typer.Option(False, "--force", help="Overwrite existing files/targets"),
+):
+	settings_path = Path(settings)
+	if not settings_path.exists():
+		typer.echo(f"Settings file not found: {settings_path}", err=True)
+		raise typer.Exit(code=2)
+
+	pname = _sanitize_name(name)
+	deps: List[str] = []
+	for item in dep:
 		for part in str(item).split(","):
 			p = _sanitize_name(part)
 			if p and p not in deps:
 				deps.append(p)
-	base_image = args.image
 
-	# YAML laden
 	with settings_path.open("r", encoding="utf-8") as f:
-		settings = yaml.safe_load(f) or {}
-	if "targets" not in settings or not isinstance(settings["targets"], dict):
-		settings["targets"] = {}
+		settings_data = yaml.safe_load(f) or {}
+	if "targets" not in settings_data or not isinstance(settings_data["targets"], dict):
+		settings_data["targets"] = {}
 
-	if name in settings["targets"] and not args.force:
-		raise SystemExit(f"Target '{name}' existiert bereits. Verwende --force zum Überschreiben.")
+	if pname in settings_data["targets"] and not force:
+		typer.echo(f"Target '{pname}' already exists. Use --force to overwrite.", err=True)
+		raise typer.Exit(code=2)
 
-	# Dockerfile schreiben
-	docker_dir = Path("docker") / name
+	docker_dir = Path("docker") / pname
 	docker_dir.mkdir(parents=True, exist_ok=True)
 	df_path = docker_dir / "Dockerfile"
-	if df_path.exists() and not args.force:
-		raise SystemExit(f"Dockerfile existiert bereits: {df_path}. Verwende --force.")
-	df_content = _dockerfile_for_image(name, deps, base_image)
+	if df_path.exists() and not force:
+		typer.echo(f"Dockerfile already exists: {df_path}. Use --force.", err=True)
+		raise typer.Exit(code=2)
+	df_content = _dockerfile_for_image(pname, deps, image)
 	df_path.write_text(df_content, encoding="utf-8")
 
-	# Target-Eintrag aktualisieren
 	target_def = {
 		"dockerfile": str(df_path).replace("\\", "/"),
 		"context": ".",
 		"deps": deps,
 		"hash_mode": "self+deps" if deps else "self",
-		"image": f"builder-{name}",
+		"image": f"baker-{pname}",
 		"latest": True,
 	}
-	settings["targets"][name] = target_def
+	settings_data["targets"][pname] = target_def
 
-	# YAML speichern
 	with settings_path.open("w", encoding="utf-8") as f:
-		yaml.safe_dump(settings, f, sort_keys=False, allow_unicode=True)
+		yaml.safe_dump(settings_data, f, sort_keys=False, allow_unicode=True)
 
-	print(f"Image '{name}' hinzugefügt. Dockerfile: {df_path}")
-	return 0
-
-# --------------------------------------------------------------
-
-def build_parser() -> argparse.ArgumentParser:
-	ap = argparse.ArgumentParser(prog="baker", description="baker-cli")
-	sub = ap.add_subparsers(dest="cmd", required=True)
-
-	p_init = sub.add_parser("init", help="Projektvorlagen initialisieren")
-	p_init.add_argument("target", nargs="?", default=".", help="Zielordner (default: cwd)")
-	p_init.add_argument("ci_literal", nargs="?", help=argparse.SUPPRESS)  # erlaubt 'baker init ci'
-	p_init.add_argument("--ci", action="store_true", help="CI-Workflow zusätzlich generieren")
-	p_init.set_defaults(func=lambda a: cmd_init(a))
-
-	p_ci = sub.add_parser("ci", help="GitHub Actions Workflow generieren/aktualisieren")
-	p_ci.add_argument("--settings", default="build-settings.yml")
-	p_ci.add_argument("--output", default=".github/workflows/baker.yml")
-	p_ci.set_defaults(func=cmd_ci)
-
-	# Kernkommandos an core delegieren
-	p_plan = sub.add_parser("plan", help="Plan anzeigen (delegiert an Core)")
-	p_plan.add_argument("args", nargs=argparse.REMAINDER)
-	p_plan.set_defaults(func=lambda a: core.core_main(["plan"] + a.args))
-
-	p_hcl = sub.add_parser("gen-hcl", help="HCL generieren (delegiert an Core)")
-	p_hcl.add_argument("args", nargs=argparse.REMAINDER)
-	p_hcl.set_defaults(func=lambda a: core.core_main(["gen-hcl"] + a.args))
-
-	p_build = sub.add_parser("build", help="Build ausführen (delegiert an Core)")
-	p_build.add_argument("args", nargs=argparse.REMAINDER)
-	p_build.set_defaults(func=lambda a: core.core_main(["build"] + a.args))
-
-	# image add
-	p_image = sub.add_parser("image", help="Image-Operationen")
-	image_sub = p_image.add_subparsers(dest="image_cmd", required=True)
-	p_image_add = image_sub.add_parser("add", help="Neues Image anlegen und in Config eintragen")
-	p_image_add.add_argument("name", help="Name des Images (z.B. release)")
-	p_image_add.add_argument("--dep", action="append", default=[], help="Abhängigkeit(en), mehrfach oder komma-getrennt")
-	p_image_add.add_argument("--image", help="Basis-Image (z.B. alpine:3)")
-	p_image_add.add_argument("--settings", default="build-settings.yml", help="Pfad zur settings YAML")
-	p_image_add.add_argument("--force", action="store_true", help="Existierende Dateien/Targets überschreiben")
-	p_image_add.set_defaults(func=cmd_image_add)
-
-	# alias: add-image
-	p_add_image = sub.add_parser("add-image", help="Alias für 'image add'")
-	p_add_image.add_argument("name")
-	p_add_image.add_argument("--dep", action="append", default=[])
-	p_add_image.add_argument("--image")
-	p_add_image.add_argument("--settings", default="build-settings.yml")
-	p_add_image.add_argument("--force", action="store_true")
-	p_add_image.set_defaults(func=cmd_image_add)
-
-	return ap
+	typer.echo(f"Image '{pname}' added. Dockerfile: {df_path}")
 
 
-def main(argv: list[str] | None = None) -> None:
-	argv = list(sys.argv[1:] if argv is None else argv)
-	# Support 'baker init ci' als Kurzform für '--ci'
-	if len(argv) >= 2 and argv[0] == "init" and argv[1] == "ci":
-		argv = ["init", "--ci"] + argv[2:]
-	ap = build_parser()
-	args = ap.parse_args(argv)
-	res = args.func(args)
-	if isinstance(res, int):
-		sys.exit(res)
+
+def main(argv: List[str] | None = None) -> None:
+	app()

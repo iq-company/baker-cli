@@ -1,6 +1,6 @@
-ARG IMAGE_BUILDER_BASE=builder-base:latest
+ARG IMAGE_BAKER_BASE=base:latest
 
-FROM ${IMAGE_BUILDER_BASE} AS base
+FROM ${IMAGE_BAKER_BASE} AS base
 
 # install jupyterlab or other tools
 # RUN pip install jupyterlab
