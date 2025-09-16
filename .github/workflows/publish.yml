@@ -5,15 +5,23 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - 'Tag on version change'
+    types:
+      - completed
 
 jobs:
   build-and-publish:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,8 +31,12 @@ jobs:
       - name: Verify tag matches project version
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
           VERSION=$(python -c "import tomllib; f=open('pyproject.toml','rb'); print(tomllib.load(f)['project']['version'])")
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v${VERSION}"
+          fi
           if [ "${TAG#v}" != "$VERSION" ]; then
             echo "Tag ${TAG} stimmt nicht mit Version ${VERSION} aus pyproject.toml überein." >&2
             exit 1
