@@ -4,14 +4,14 @@ import shutil
 import os
 import yaml
 import typer
-from typing import List, Optional
+from typing import List, Optional, Literal
 from importlib.resources import files as pkg_files
 from jinja2 import Environment, BaseLoader
 
 from . import core
 
 
-app = typer.Typer(add_completion=False, help="baker-cli")
+app = typer.Typer(add_completion=False, help="baker-cli", rich_markup_mode="markdown", context_settings={"help_option_names": ["-h", "--help"]})
 image_app = typer.Typer(add_completion=False, help="Add a new image target")
 app.add_typer(image_app, name="image")
 
@@ -173,20 +173,129 @@ def ci_cmd(
 	typer.echo(f"Wrote {label} workflow to {out_path}")
 
 
-# Delegation to core (pass raw arguments through)
-@app.command("plan", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Show the plan and what would build")
-def plan_cmd(ctx: typer.Context):
-	core.core_main(["plan", *ctx.args])
+@app.command("plan", help="Show the plan and what would build")
+def plan_cmd(
+    settings: str = typer.Option("build-settings.yml", "--settings", help="Path to settings.yml (default: build-settings.yml)"),
+    set_override: List[str] = typer.Option([], "--set", help="Override config property, e.g. --set push=false or --set targets.srv.latest=false"),
+    targets: Optional[List[str]] = typer.Option(None, "--targets", help="targets (default: all)"),
+    force: List[str] = typer.Option([], "--force", help="force specific targets"),
+    skip: List[str] = typer.Option([], "--skip", help="skip specific targets"),
+    end: List[str] = typer.Option([], "--end", help="stop planning at these targets"),
+    check: Optional[Literal["auto","local","remote"]] = typer.Option(None, "--check", help="where to check image existence", case_sensitive=False),
+    push: Optional[bool] = typer.Option(None, "--push/--no-push", help="override push behavior"),
+    json_out: bool = typer.Option(False, "--json", help="machine-readable output"),
+    print_env: bool = typer.Option(False, "--print-env", help="print TAG_<TARGET> vars"),
+):
+    class Args:
+        pass
+    args = Args()
+    args.targets = targets
+    args.force = force
+    args.skip = skip
+    args.end = end
+    args.check = check
+    args.push = push
+    args.json = json_out
+    args.print_env = print_env
+    args.overrides = set_override
+    s = core.load_settings(settings)
+    # apply overrides and coerce
+    for ov in set_override:
+        if "=" not in ov:
+            raise typer.Exit(code=2)
+        k, v = ov.split("=", 1)
+        core.set_deep(s, k.strip(), v)
+    s = core.coerce_bools(s)
+    selected, primary_tags, all_tags_map, to_build, decisions = core.plan(s, args)
+    if json_out:
+        import json as _json
+        typer.echo(_json.dumps({"selected": selected, "decisions": decisions}, indent=2))
+        return
+    if print_env:
+        for n in selected:
+            envname = f"TAG_{n.replace('-', '_').upper()}"
+            typer.echo(f"{envname}={decisions[n]['primary_tag']}")
+    for n in selected:
+        d = decisions[n]
+        mark = "BUILD" if d["build"] else "skip"
+        all_tags_str = ",".join(d["all_tags"])
+        typer.echo(f"{n:<22} {d['primary_tag']:<12} {mark:5} ({d['reason']})  {d['ref']}  [{all_tags_str}]")
+    typer.echo("\nWill build:" if to_build else "\nNothing to build.", nl=False)
+    if to_build:
+        typer.echo(" " + ", ".join(to_build))
 
 
-@app.command("gen-hcl", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Generate a docker-bake.hcl file from the build-settings.yml for debugging purposes")
-def gen_hcl_cmd(ctx: typer.Context):
-	core.core_main(["gen-hcl", *ctx.args])
+@app.command("gen-hcl", help="Generate a docker-bake.hcl file from the build-settings.yml for debugging purposes")
+def gen_hcl_cmd(
+    settings: str = typer.Option("build-settings.yml", "--settings"),
+    set_override: List[str] = typer.Option([], "--set"),
+    targets: Optional[List[str]] = typer.Option(None, "--targets"),
+    force: List[str] = typer.Option([], "--force"),
+    skip: List[str] = typer.Option([], "--skip"),
+    end: List[str] = typer.Option([], "--end"),
+    check: Optional[str] = typer.Option(None, "--check"),
+    push: Optional[bool] = typer.Option(None, "--push/--no-push"),
+    output: str = typer.Option("docker-bake.hcl", "-o", "--output"),
+):
+    class Args:
+        pass
+    args = Args()
+    args.targets = targets
+    args.force = force
+    args.skip = skip
+    args.end = end
+    args.check = check
+    args.push = push
+    args.overrides = set_override
+    s = core.load_settings(settings)
+    for ov in set_override:
+        if "=" not in ov:
+            raise typer.Exit(code=2)
+        k, v = ov.split("=", 1)
+        core.set_deep(s, k.strip(), v)
+    s = core.coerce_bools(s)
+    selected = core.select_targets(s, targets)
+    primary_tags, all_tags_map = core.compute_tags(s, selected)
+    hcl = core.gen_hcl(s, primary_tags, all_tags_map, targets_subset=selected)
+    if output == "-":
+        typer.echo(hcl, nl=False)
+    else:
+        Path(output).write_text(hcl, encoding="utf-8")
+        typer.echo(f"Wrote {output}")
 
 
-@app.command("build", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Build the Docker images")
-def build_cmd(ctx: typer.Context):
-	core.core_main(["build", *ctx.args])
+@app.command("build", help="Build the Docker images")
+def build_cmd(
+    settings: str = typer.Option("build-settings.yml", "--settings"),
+    set_override: List[str] = typer.Option([], "--set"),
+    targets: Optional[List[str]] = typer.Option(None, "--targets"),
+    force: List[str] = typer.Option([], "--force"),
+    skip: List[str] = typer.Option([], "--skip"),
+    end: List[str] = typer.Option([], "--end"),
+    check: Optional[str] = typer.Option(None, "--check"),
+    push: Optional[bool] = typer.Option(None, "--push/--no-push"),
+    keep_hcl: bool = typer.Option(False, "--keep-hcl", help="keep temporary .bake file"),
+):
+    class Args:
+        pass
+    args = Args()
+    args.targets = targets
+    args.force = force
+    args.skip = skip
+    args.end = end
+    args.check = check
+    args.push = push
+    args.overrides = set_override
+    args.keep_hcl = keep_hcl
+    s = core.load_settings(settings)
+    for ov in set_override:
+        if "=" not in ov:
+            raise typer.Exit(code=2)
+        k, v = ov.split("=", 1)
+        core.set_deep(s, k.strip(), v)
+    s = core.coerce_bools(s)
+    selected, primary_tags, all_tags_map, to_build, decisions = core.plan(s, args)
+    core.do_build(s, args, to_build, primary_tags, all_tags_map)
 
 
 @image_app.command("add", help="Add a new image target")
@@ -251,4 +360,4 @@ def version_cmd():
 	typer.echo(f"baker-cli version {__version__}")
 
 def main(argv: List[str] | None = None) -> None:
-	app()
+    app()
