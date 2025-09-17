@@ -251,6 +251,12 @@ def compute_self_hash(settings: dict, tname: str) -> str:
 	# Hash files
 	for f in t.get("hash_files", [t["dockerfile"]]):
 		p = Path(f)
+		# If the path is not absolute and doesn't exist at repo root, try resolving relative to the target context
+		if not p.is_absolute() and not p.exists():
+			ctx = Path(t.get("context", "."))
+			candidate = (ctx / f)
+			if candidate.exists():
+				p = candidate
 		if not p.exists():
 			raise FileNotFoundError(f"Hash file not found: {f} (target {tname})")
 		with p.open("rb") as fp:
