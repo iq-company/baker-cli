@@ -1,6 +1,6 @@
-# Baker Setup
+# Bake: {{ project_name }}
 
-This repository contains a minimal Baker setup: build-settings.yml and Dockerfiles under docker/.
+This repository contains a minimal Baker setup to bake Images for: {{ project_name }}
 
 ## Install (recommended local .venv)
 
@@ -17,10 +17,10 @@ pip install .
 
 ```bash
 # Show plan
-baker plan --settings build-settings.yml --check local --targets base
+baker plan --check local --targets base
 
 # Build and push
-baker build --settings build-settings.yml --check remote --push --targets base
+baker build --check remote --push --targets base
 ```
 
 ## CI Workflow (GitHub Actions)

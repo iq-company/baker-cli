@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "baker-setup"
+name = "{{ project_slug }}"
 version = "0.0.1"
-description = "Baker setup repository"
+description = "Repo to bake {{ project_name }}"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [

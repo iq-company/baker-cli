@@ -18,21 +18,24 @@ targets:
     context: .
     deps: []
     hash_mode: self
-    image: example-base
+    image: base
     latest: true
 
   dev:
     dockerfile: docker/dev/Dockerfile
     context: .
-    deps: [base]
+    deps:
+      - base
     hash_mode: self
-    image: example-dev
+    image: dev
     latest: true
 
   release:
     dockerfile: docker/release/Dockerfile
     context: .
-    deps: [base]
+    deps:
+      - base
+      - dev
     hash_mode: self+deps
-    image: example-release
+    image: release
     latest: true

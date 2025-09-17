@@ -116,6 +116,9 @@ def init_cmd(
 	target: Optional[str] = typer.Argument(None, help="Zielordner (default: cwd)"),
 ):
 	target_path = Path(target or ".").resolve()
+	# Projektname aus Zielordner ableiten (oder CWD, wenn kein Ziel übergeben)
+	project_name = (Path(target).name if target else Path.cwd().name)
+	project_slug = _sanitize_name(project_name)
 	templates_root = Path(pkg_files("baker_cli") / "templates")
 	# Projekt-Templates kopieren (ohne CI-Vorlagen)
 	files_to_copy = [
@@ -128,12 +131,23 @@ def init_cmd(
 	dirs_to_copy = [
 		templates_root / "docker",
 	]
+
+	# Jinja-Environment für Text-Templates (kein Autoescape, Newlines erhalten)
+	env = Environment(loader=BaseLoader(), autoescape=False, keep_trailing_newline=True)
+
 	for fp in files_to_copy:
 		if fp.exists():
 			target_path.mkdir(parents=True, exist_ok=True)
 			out = target_path / fp.name
 			if not out.exists():
-				shutil.copy2(fp, out)
+				# .envrc bleibt unverändert kopiert, alle anderen werden gerendert
+				if fp.name == ".envrc":
+					shutil.copy2(fp, out)
+				else:
+					src_txt = fp.read_text(encoding="utf-8")
+					tmpl = env.from_string(src_txt)
+					rendered = tmpl.render(project_name=project_name, project_slug=project_slug)
+					out.write_text(rendered, encoding="utf-8")
 	for dp in dirs_to_copy:
 		if dp.exists():
 			copy_tree(dp, target_path / dp.name)

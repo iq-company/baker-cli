@@ -33,7 +33,7 @@ jobs:
           python-version: '3.x'
       - name: Install baker-cli
         run: pip install baker-cli
-      - name: Build all targets
+      - name: Bake targets
         run: |
           set -e
 {%- for t in targets %}
