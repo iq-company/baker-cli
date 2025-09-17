@@ -4,7 +4,7 @@ import shutil
 import os
 import yaml
 import typer
-from typing import List, Optional, Literal
+from typing import List, Optional
 from importlib.resources import files as pkg_files
 from jinja2 import Environment, BaseLoader
 
@@ -126,6 +126,7 @@ def init_cmd(
 		# Additional helper files, if not present
 		templates_root / "README.md",
 		templates_root / "pyproject.toml",
+		templates_root / ".gitignore",
 		templates_root / ".envrc",
 	]
 	dirs_to_copy = [
@@ -140,8 +141,8 @@ def init_cmd(
 			target_path.mkdir(parents=True, exist_ok=True)
 			out = target_path / fp.name
 			if not out.exists():
-				# .envrc is copied unchanged, all others are rendered
-				if fp.name == ".envrc":
+				# .envrc and .gitignore are copied unchanged, all others are rendered
+				if fp.name in (".envrc", ".gitignore"):
 					shutil.copy2(fp, out)
 				else:
 					src_txt = fp.read_text(encoding="utf-8")
@@ -181,7 +182,7 @@ def plan_cmd(
     force: List[str] = typer.Option([], "--force", help="force specific targets"),
     skip: List[str] = typer.Option([], "--skip", help="skip specific targets"),
     end: List[str] = typer.Option([], "--end", help="stop planning at these targets"),
-    check: Optional[Literal["auto","local","remote"]] = typer.Option(None, "--check", help="where to check image existence", case_sensitive=False),
+    check: Optional[str] = typer.Option(None, "--check", help="where to check image existence (auto|local|remote)", case_sensitive=False),
     push: Optional[bool] = typer.Option(None, "--push/--no-push", help="override push behavior"),
     json_out: bool = typer.Option(False, "--json", help="machine-readable output"),
     print_env: bool = typer.Option(False, "--print-env", help="print TAG_<TARGET> vars"),

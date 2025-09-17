@@ -20,7 +20,7 @@ pip install .
 baker plan
 
 # Build and push
-baker build --check remote --push
+baker build --push
 ```
 
 ## CI Workflow (GitHub Actions)
@@ -28,4 +28,10 @@ baker build --check remote --push
 ```bash
 # Generate or update the workflow based on build-settings.yml
 baker ci gh
+```
+
+## Update Baker
+
+```bash
+pip install -e .
 ```
