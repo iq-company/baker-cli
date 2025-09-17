@@ -39,7 +39,7 @@ A small, pragmatic Python CLI that controls your Docker build cascades **uniform
 
 ## Quickstart
 
-### 1) Installation mit venv (Empfohlen)
+### 1) Installation with venv (Recommended)
 
 ```bash
 mkdir my-project
@@ -54,41 +54,41 @@ pip install baker-cli
 baker init
 ```
 
-### 2) Installation global (pip/pipx)
+### 2) Global installation (pip/pipx)
 
 ```bash
-# Mit pip
+# With pip
 pip install baker-cli
 
-# Oder mit pipx (empfohlen für globale CLIs)
+# Or with pipx (recommended for global CLIs)
 pipx install baker-cli
 
-# Projekt initialisieren (aktuelles Verzeichnis oder Zielordner)
+# Initialize project (current directory or target folder)
 baker init
-# oder
-baker init ./mein-projekt
+# or
+baker init ./my-project
 ```
 
-### 2) Entwicklung (lokal, .venv)
+### 2) Development (local, .venv)
 
 ```bash
-# Virtuelle Umgebung anlegen
+# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
-# Projekt lokal installieren (editable)
+# Install project locally (editable)
 pip install -U pip
 pip install -e .
 
-# Projekt initialisieren (falls noch nicht vorhanden)
+# Initialize project (if not yet present)
 baker init
 
-# Optional: CI-Workflow generieren
+# Optional: Generate CI workflow
 baker ci --settings build-settings.yml
 
-# Beispiel: Plan & Build
-baker plan --settings build-settings.yml --check local --targets base
-baker build --settings build-settings.yml --check remote --push --targets base
+# Example: Plan & Build
+baker plan
+baker build --push --targets base
 ```
 
 ---

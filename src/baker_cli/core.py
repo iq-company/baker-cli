@@ -52,10 +52,10 @@ def parse_value(val: str):
 	if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")) or (s.startswith('"') and s.endswith('"')):
 		try: return json.loads(s)
 		except Exception: pass
-	# Zahl?
+	# Number?
 	if re.fullmatch(r"-?\d+", s):  return int(s)
 	if re.fullmatch(r"-?\d+\.\d+", s): return float(s)
-	# Kommagetrennte Liste?
+	# Comma-separated list?
 	if "," in s: return [x.strip() for x in s.split(",")]
 	return s
 
@@ -69,7 +69,7 @@ def set_deep(d: dict, dotted_key: str, raw_value: str):
 	cur[keys[-1]] = parse_value(raw_value)
 
 def coerce_bools(settings: dict):
-	# Top-level: push -> bool, check bleibt string
+	# Top-level: push -> bool, check remains string
 	if isinstance(settings.get("push"), str):
 		settings["push"] = parse_value(settings["push"])
 	# targets.*.latest -> bool
@@ -171,7 +171,7 @@ def load_settings(path: str|None) -> dict:
 		raw = yaml.safe_load(f) or {}
 		if not isinstance(raw, dict):
 			raise ValueError("settings file must be a mapping at top level.")
-	# first-pass interpolate (for registry/owner/etc.)
+	# First-pass interpolate (for registry/owner/etc.)
 	raw = deep_interpolate(raw)
 	# Deep-merge nested sections
 	s.update({k:v for k,v in raw.items() if k not in ("hash","args")})
@@ -180,7 +180,7 @@ def load_settings(path: str|None) -> dict:
 	if "args" in raw:
 		s["args"] = { **DEFAULT_SETTINGS.get("args", {}), **(raw.get("args") or {}) }
 
-	# env overrides for registry/owner remain possible
+	# Env overrides for registry/owner remain possible
 	s["registry"] = os.getenv("REGISTRY", s.get("registry"))
 	owner = os.getenv("OWNER", s.get("owner") or "")
 	if not owner:
@@ -193,7 +193,7 @@ def load_settings(path: str|None) -> dict:
 		raise ValueError("'bundles' must be a mapping if present.")
 	s.setdefault("bundles", {})
 
-	# normalize targets
+	# Normalize targets
 	for name, t in s["targets"].items():
 		if "dockerfile" not in t:
 			raise ValueError(f"Target '{name}' missing 'dockerfile'.")
@@ -210,9 +210,9 @@ def load_settings(path: str|None) -> dict:
 
 # ---------- graph utils ----------
 def expand_targets(settings, names):
-	# keine Bundles mehr – nur direkte Targets + transitive Deps
+	# No bundles anymore – only direct targets plus transitive dependencies
 	targets = settings["targets"]
-	if not names:						   # nichts angegeben -> alle
+	if not names:						   # if nothing specified -> all
 		return list(targets.keys())
 	selected = set()
 	def add_with_deps(n):
@@ -224,7 +224,7 @@ def expand_targets(settings, names):
 		selected.add(n)
 	for n in names:
 		add_with_deps(n)
-	return list(selected)						# spätere topo_sort sorgt für Reihenfolge
+	return list(selected)						# later topo_sort ensures correct order
 
 def topo_sort(settings: dict, selected: list[str]) -> list[str]:
 	targets = settings["targets"]
@@ -248,7 +248,7 @@ def compute_self_hash(settings: dict, tname: str) -> str:
 	t = settings["targets"][tname]
 	h = hashlib.sha256()
 
-	# Dateien hashen
+	# Hash files
 	for f in t.get("hash_files", [t["dockerfile"]]):
 		p = Path(f)
 		if not p.exists():
@@ -257,8 +257,8 @@ def compute_self_hash(settings: dict, tname: str) -> str:
 			for chunk in iter(lambda: fp.read(65536), b""):
 				h.update(chunk)
 
-	# Build-Args deterministisch einfließen lassen (nach Interpolation!)
-	# Sortierte key=value-Linien, damit stabil.
+	# Include build args deterministically (after interpolation!)
+	# Sorted key=value lines for stability.
 	ba = t.get("build_args", {}) or {}
 	for k in sorted(ba.keys()):
 		v = "" if ba[k] is None else str(ba[k])
@@ -316,7 +316,7 @@ def compute_tags(settings: dict, selected: list[str]):
 		if expr.startswith("${") and expr.endswith("}"):
 			inner = expr[2:-1].strip()
 			return eval_tag_expr(inner, settings, tname, hashes)
-		# gemischte Strings mit ${...}
+		# Mixed strings with ${...}
 		if "${" in expr:
 			def repl(m): return eval_tag_expr(m.group(1), settings, tname, hashes)
 			return normalize_tag(re.sub(r"\$\{([^}]+)\}", repl, expr))
@@ -331,24 +331,24 @@ def compute_tags(settings: dict, selected: list[str]):
 			for item in t["tags"]:
 				tag_list.append(eval_one(str(item), tname))
 		else:
-			# Einzel-Tag-Logik von vorher:
+			# Single-tag logic from before:
 			expr = t.get("tag")
 			if isinstance(expr, str) and expr:
 				tag_list = [eval_one(expr, tname)]
 			else:
-				# Default: kurzer Hash
+				# Default: short hash
 				tag_list = [short_hash(hashes[tname], n)]
 
-		# latest aus Kompatibilität anhängen
+		# Append 'latest' for compatibility
 		if t.get("latest", False) and "latest" not in tag_list:
 			tag_list.append("latest")
 
-		# Deduplizieren, Reihenfolge erhalten
+		# De-duplicate while preserving order
 		seen = set(); uniq = []
 		for x in tag_list:
 			if x not in seen:
 				seen.add(x); uniq.append(x)
-		# Sicherheitsnetz: mindestens 1 Tag
+		# Safety net: ensure at least one tag
 		if not uniq:
 			uniq = [short_hash(hashes[tname], n)]
 
@@ -368,14 +368,14 @@ def image_ref(settings: dict, tname: str, tag: str) -> str:
 	reg = (settings.get("registry") or "").strip()
 	own = (settings.get("owner") or "").strip()
 
-	# nur nicht-leere Teile anhängen
+	# Append only non-empty parts
 	if reg:
 		parts.append(reg)
 	if own:
 		parts.append(own)
 	parts.append(img)
 
-	repo = "/".join(parts)				# z.B. "builder-ui" oder "ghcr.io/owner/builder-ui"
+	repo = "/".join(parts)				# e.g., "builder-ui" or "ghcr.io/owner/builder-ui"
 	repo = re.sub(r"/{2,}", "/", repo).lstrip("/")
 
 	return f"{repo}:{tag}"
@@ -403,7 +403,7 @@ def gen_hcl(settings: dict, primary_tags: dict[str,str], all_tags_map: dict[str,
 
 	for tname in subset:
 		t = targets[tname]
-		# Auto-Args mit Primär-Tag der Deps
+		# Auto-args using the primary tag of dependencies
 		auto_args = {}
 		for dep in t.get("deps", []):
 			key = f"{dep_prefix}{dep.replace('-','_').upper()}"
@@ -424,7 +424,7 @@ def gen_hcl(settings: dict, primary_tags: dict[str,str], all_tags_map: dict[str,
 				out.append(f'\t {k} = "{all_args[k]}",')
 			out.append("  }")
 
-		# ← hier ALLE Tags ausgeben
+		# Output ALL tags here
 		out.append("  tags = [")
 		for tag in all_tags_map[tname]:
 			out.append(f'\t "{image_ref(settings, tname, tag)}",')
@@ -446,7 +446,7 @@ def plan(settings, args, selected_override=None):
 
 	to_build, decisions = [], {}
 	for n in selected:
-		ref = image_ref(settings, n, primary_tags[n])  # ← Primär-Tag entscheidet
+		ref = image_ref(settings, n, primary_tags[n])  # primary tag decides
 		exists = image_exists_remote(ref) if remote else image_exists_local(ref)
 		reason = "exists-remote" if (remote and exists) else ("exists-local" if (not remote and exists) else "missing")
 		force = n in (args.force or [])
@@ -472,10 +472,10 @@ def plan(settings, args, selected_override=None):
 
 def do_build(settings: dict, args, to_build: list[str], primary_tags: dict[str,str], all_tags_map: dict[str,list[str]]):
 	"""
-	Build die 'to_build'-Targets sequenziell.
-	- HCL wird für die gesamte Auswahl (Closure über --targets) erzeugt,
-	  damit Auto-Args (IMAGE_*) alle Dep-Tags kennen.
-	- Bei push=false laden wir ins lokale Docker-Image-Store (--load).
+	Build the 'to_build' targets sequentially.
+	- HCL is generated for the entire selection (closure over --targets),
+	  so that auto-args (IMAGE_*) know all dependency tags.
+	- When push=false we load into the local Docker image store (--load).
 	"""
 	from pathlib import Path
 
@@ -503,8 +503,8 @@ def do_build(settings: dict, args, to_build: list[str], primary_tags: dict[str,s
 			tmp.unlink(missing_ok=True)
 
 def select_targets(settings: dict, names: list[str] | None) -> list[str]:
-	"""Wählt die gewünschten Targets (oder alle) und ergänzt transitiv alle Dependencies.
-	Gibt eine topologisch sortierte Liste zurück.
+	"""Selects the desired targets (or all) and transitively adds all dependencies.
+	Returns a topologically sorted list.
 	"""
 	tdefs = settings["targets"]
 	if not names:

@@ -15,7 +15,7 @@ app = typer.Typer(add_completion=False, help="baker-cli")
 image_app = typer.Typer(add_completion=False, help="Add a new image target")
 app.add_typer(image_app, name="image")
 
-# Unterstützte CI-Provider und ihre Templates/Standard-Ausgabeorte
+# Supported CI providers and their templates/default output locations
 CI_PIPELINES = {
 	"gh": {
 		"template": ("ci", "github-actions.yml.j2"),
@@ -43,7 +43,7 @@ def _sanitize_name(name: str) -> str:
 	s = "".join(ch for ch in s if (ch.isalnum() or ch in "-_."))
 	s = s.strip("-._")
 	if not s:
-		typer.echo("Ungültiger Name für Image", err=True)
+		typer.echo("Invalid name for image", err=True)
 		raise typer.Exit(code=2)
 	return s
 
@@ -95,7 +95,7 @@ def _compute_leaf_targets(settings: dict) -> List[str]:
 def _render_ci(settings: dict, provider: str) -> str:
 	if provider not in CI_PIPELINES:
 		allowed = ", ".join(sorted(CI_PIPELINES.keys()))
-		typer.echo(f"Unbekannter CI-Provider '{provider}'. Erlaubt: {allowed}", err=True)
+		typer.echo(f"Unknown CI provider '{provider}'. Allowed: {allowed}", err=True)
 		raise typer.Exit(code=2)
 
 	leaf_targets = _compute_leaf_targets(settings)
@@ -105,7 +105,7 @@ def _render_ci(settings: dict, provider: str) -> str:
 
 	section, name = CI_PIPELINES[provider]["template"]
 	jinja_src = load_template(section, name)
-	# Keine Trimmung: Zeilenumbrüche exakt erhalten
+	# No trimming: preserve line breaks exactly
 	env = Environment(loader=BaseLoader(), autoescape=False, keep_trailing_newline=True)
 	tmpl = env.from_string(jinja_src)
 	return tmpl.render(registry=registry, targets=leaf_targets)
@@ -113,17 +113,17 @@ def _render_ci(settings: dict, provider: str) -> str:
 
 @app.command("init", help="Initialize a new baker project")
 def init_cmd(
-	target: Optional[str] = typer.Argument(None, help="Zielordner (default: cwd)"),
+	target: Optional[str] = typer.Argument(None, help="Target folder (default: cwd)"),
 ):
 	target_path = Path(target or ".").resolve()
-	# Projektname aus Zielordner ableiten (oder CWD, wenn kein Ziel übergeben)
+	# Derive project name from target folder (or CWD if no target provided)
 	project_name = (Path(target).name if target else Path.cwd().name)
 	project_slug = _sanitize_name(project_name)
 	templates_root = Path(pkg_files("baker_cli") / "templates")
-	# Projekt-Templates kopieren (ohne CI-Vorlagen)
+	# Copy project templates (excluding CI templates)
 	files_to_copy = [
 		templates_root / "build-settings.yml",
-		# zusätzliche Hilfsdateien, falls nicht vorhanden
+		# Additional helper files, if not present
 		templates_root / "README.md",
 		templates_root / "pyproject.toml",
 		templates_root / ".envrc",
@@ -132,7 +132,7 @@ def init_cmd(
 		templates_root / "docker",
 	]
 
-	# Jinja-Environment für Text-Templates (kein Autoescape, Newlines erhalten)
+	# Jinja environment for text templates (no autoescape, preserve newlines)
 	env = Environment(loader=BaseLoader(), autoescape=False, keep_trailing_newline=True)
 
 	for fp in files_to_copy:
@@ -140,7 +140,7 @@ def init_cmd(
 			target_path.mkdir(parents=True, exist_ok=True)
 			out = target_path / fp.name
 			if not out.exists():
-				# .envrc bleibt unverändert kopiert, alle anderen werden gerendert
+				# .envrc is copied unchanged, all others are rendered
 				if fp.name == ".envrc":
 					shutil.copy2(fp, out)
 				else:
@@ -157,14 +157,14 @@ def init_cmd(
 
 @app.command("ci", help="Generate a CI workflow Pipeline for a specific CI provider")
 def ci_cmd(
-	provider: str = typer.Argument(..., help="CI-Provider (z.B. 'gh' für GitHub Actions)"),
+	provider: str = typer.Argument(..., help="CI provider (e.g., 'gh' for GitHub Actions)"),
 	settings: str = typer.Option("build-settings.yml", "--settings"),
 	output: Optional[str] = typer.Option(None, "--output"),
 ):
 	settings_path = Path(settings)
 	data = _read_settings(settings_path)
 	out_yaml = _render_ci(data, provider)
-	# Default-Ausgabe abhängig vom Provider
+	# Default output depends on provider
 	default_out = CI_PIPELINES.get(provider, {}).get("default_output", "baker-ci.yml")
 	out_path = Path(output or default_out)
 	out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +173,7 @@ def ci_cmd(
 	typer.echo(f"Wrote {label} workflow to {out_path}")
 
 
-# Delegation an Core (rohe Argumente durchreichen)
+# Delegation to core (pass raw arguments through)
 @app.command("plan", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}, help="Show the plan and what would build")
 def plan_cmd(ctx: typer.Context):
 	core.core_main(["plan", *ctx.args])

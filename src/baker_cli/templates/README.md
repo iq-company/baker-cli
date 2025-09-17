@@ -17,10 +17,10 @@ pip install .
 
 ```bash
 # Show plan
-baker plan --check local --targets base
+baker plan
 
 # Build and push
-baker build --check remote --push --targets base
+baker build --check remote --push
 ```
 
 ## CI Workflow (GitHub Actions)
