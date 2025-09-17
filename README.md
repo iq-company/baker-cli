@@ -39,7 +39,22 @@ A small, pragmatic Python CLI that controls your Docker build cascades **uniform
 
 ## Quickstart
 
-### 1) Installation (pip/pipx)
+### 1) Installation mit venv (Empfohlen)
+
+```bash
+mkdir my-project
+
+cd my-project
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install baker-cli
+
+baker init
+```
+
+### 2) Installation global (pip/pipx)
 
 ```bash
 # Mit pip
