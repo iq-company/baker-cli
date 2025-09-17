@@ -123,6 +123,7 @@ def init_cmd(
 		# zusätzliche Hilfsdateien, falls nicht vorhanden
 		templates_root / "README.md",
 		templates_root / "pyproject.toml",
+		templates_root / ".envrc",
 	]
 	dirs_to_copy = [
 		templates_root / "docker",
