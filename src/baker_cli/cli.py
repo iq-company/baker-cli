@@ -162,16 +162,17 @@ def ci_cmd(
 	settings: str = typer.Option("build-settings.yml", "--settings"),
 	output: Optional[str] = typer.Option(None, "--output"),
 ):
-	settings_path = Path(settings)
-	data = _read_settings(settings_path)
-	out_yaml = _render_ci(data, provider)
-	# Default output depends on provider
-	default_out = CI_PIPELINES.get(provider, {}).get("default_output", "baker-ci.yml")
-	out_path = Path(output or default_out)
-	out_path.parent.mkdir(parents=True, exist_ok=True)
-	out_path.write_text(out_yaml, encoding="utf-8")
-	label = CI_PIPELINES.get(provider, {}).get("label", provider)
-	typer.echo(f"Wrote {label} workflow to {out_path}")
+		# Read raw settings; interpolation happens at plan/build time
+		settings_path = Path(settings)
+		data = _read_settings(settings_path)
+		out_yaml = _render_ci(data, provider)
+		# Default output depends on provider
+		default_out = CI_PIPELINES.get(provider, {}).get("default_output", "baker-ci.yml")
+		out_path = Path(output or default_out)
+		out_path.parent.mkdir(parents=True, exist_ok=True)
+		out_path.write_text(out_yaml, encoding="utf-8")
+		label = CI_PIPELINES.get(provider, {}).get("label", provider)
+		typer.echo(f"Wrote {label} workflow to {out_path}")
 
 
 @app.command("plan", help="Show the plan and what would build")
@@ -297,6 +298,45 @@ def build_cmd(
     s = core.coerce_bools(s)
     selected, primary_tags, all_tags_map, to_build, decisions = core.plan(s, args)
     core.do_build(s, args, to_build, primary_tags, all_tags_map)
+
+
+@app.command("rm", help="Remove local Docker images for selected or all targets")
+def rm_cmd(
+    settings: str = typer.Option("build-settings.yml", "--settings"),
+    set_override: List[str] = typer.Option([], "--set"),
+    targets: Optional[List[str]] = typer.Option(None, "--targets", help="targets (default: all)"),
+    all_tags: bool = typer.Option(False, "--all-tags/--primary-only", help="remove all tags or only primary tag per target"),
+    do_rm: bool = typer.Option(False, "--rm", help="Dry Run, if not set explicitly"),
+    force_delete: bool = typer.Option(False, "--force", help="use 'docker image rm -f'"),
+):
+    class Args:
+        pass
+    args = Args()
+    args.targets = targets
+    args.overrides = set_override
+
+    s = core.load_settings(settings)
+    for ov in set_override:
+        if "=" not in ov:
+            raise typer.Exit(code=2)
+        k, v = ov.split("=", 1)
+        core.set_deep(s, k.strip(), v)
+    s = core.coerce_bools(s)
+
+    if do_rm:
+        typer.echo("REAL-RUN: docker image rm\n")
+    else:
+        typer.echo("DRY-RUN: docker image rm (run with --rm to execute in real)\n")
+
+    selected = core.select_targets(s, targets)
+    primary_tags, all_tags_map = core.compute_tags(s, selected)
+    res = core.do_rm(s, selected, primary_tags, all_tags_map, all_tags=all_tags, docker_force=force_delete, dry_run=not do_rm)
+
+		# check if a value in res is available greater than 0
+    if any(value > 0 for value in res.values()):
+      typer.echo(f"\nSummary: removed {res['removed']}, missing {res['missing']}, failed {res['failed']} (attempted {res['attempted']})")
+    else:
+      typer.echo("Nothing to do.")
 
 
 @image_app.command("add", help="Add a new image target")

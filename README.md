@@ -28,6 +28,7 @@ A small, pragmatic Python CLI that controls your Docker build cascades **uniform
   * [`plan`](#plan)
   * [`gen-hcl`](#gen-hcl)
   * [`build`](#build)
+  * [`rm`](#rm)
   * [Global Overrides (`--set`)](#global-overrides---set)
 * [Existence Check & Push Strategy](#existence-check--push-strategy)
 * [GitHub Actions Example](#github-actions-example)
@@ -308,6 +309,24 @@ jobs:
             --push=on \
             --targets all \
             --set BUILD_VERSION=${{ github.sha }}
+```
+
+### `rm`
+
+Remove local Docker images for specific or all targets:
+
+```bash
+# Dry-run: show what would be removed for specific targets
+baker rm --targets base app --dry-run
+
+# Remove only primary tags for all targets
+baker rm
+
+# Remove all tags for selected targets
+baker rm --targets base app --all-tags
+
+# Force remove (dangling/used) images
+baker rm --targets base --force
 ```
 
 ---

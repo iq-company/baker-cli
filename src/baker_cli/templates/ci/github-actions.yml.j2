@@ -13,7 +13,7 @@ jobs:
       contents: read
       packages: write
     env:
-      REGISTRY: {{ registry }}
+      {% raw %}REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}{% endraw %}
       {% raw %}OWNER: ${{ github.repository_owner }}{% endraw %}
     steps:
       - uses: actions/checkout@v4

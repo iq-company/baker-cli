@@ -508,6 +508,60 @@ def do_build(settings: dict, args, to_build: list[str], primary_tags: dict[str,s
 		if not getattr(args, "keep_hcl", False):
 			tmp.unlink(missing_ok=True)
 
+
+def _image_refs_for_targets(settings: dict, targets: list[str], primary_tags: dict[str,str], all_tags_map: dict[str,list[str]], include_all_tags: bool) -> list[str]:
+	"""Return a de-duplicated list of image refs for the given targets.
+
+	If include_all_tags is False, only primary tags are returned per target.
+	"""
+	seen = set()
+	refs: list[str] = []
+	for t in targets:
+		if include_all_tags:
+			for tag in all_tags_map.get(t, []):
+				ref = image_ref(settings, t, tag)
+				if ref not in seen:
+					seen.add(ref); refs.append(ref)
+		else:
+			ref = image_ref(settings, t, primary_tags[t])
+			if ref not in seen:
+				seen.add(ref); refs.append(ref)
+	return refs
+
+
+def do_rm(settings: dict, targets: list[str], primary_tags: dict[str,str], all_tags_map: dict[str,list[str]], *, all_tags: bool, docker_force: bool, dry_run: bool) -> dict:
+	"""Remove local Docker images for the given targets.
+
+	Returns a dict with counts: {attempted, removed, missing, failed}.
+	"""
+	refs = _image_refs_for_targets(settings, targets, primary_tags, all_tags_map, include_all_tags=all_tags)
+	result = {"attempted": 0, "removed": 0, "missing": 0, "failed": 0}
+
+	for ref in refs:
+		# Check local existence to provide nicer stats; still attempt removal if force requested
+		exists = image_exists_local(ref)
+
+		if not exists:
+			# print("MISSING:", ref)
+			# result["missing"] += 1
+			continue
+
+		result["attempted"] += 1
+
+		cmd = ["docker", "image", "rm"] + (["-f"] if docker_force else []) + [ref]
+
+		if not dry_run:
+			p = run(cmd, check=False, capture=True)
+
+		if dry_run or p.returncode == 0:
+			print("REMOVED:", ref)
+			result["removed"] += 1
+		else:
+			# Heuristic: if it did not exist before, count as missing, else failed
+			print("FAILED:", ref)
+			result["failed"] += 1
+	return result
+
 def select_targets(settings: dict, names: list[str] | None) -> list[str]:
 	"""Selects the desired targets (or all) and transitively adds all dependencies.
 	Returns a topologically sorted list.
