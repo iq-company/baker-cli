@@ -258,7 +258,9 @@ def gen_hcl_cmd(
     s = core.coerce_bools(s)
     selected = core.select_targets(s, targets)
     primary_tags, all_tags_map = core.compute_tags(s, selected)
-    hcl = core.gen_hcl(s, primary_tags, all_tags_map, targets_subset=selected)
+    # Compute hashes for build_args interpolation
+    hashes = core.compute_all_hashes(s, selected)
+    hcl = core.gen_hcl(s, primary_tags, all_tags_map, targets_subset=selected, hashes=hashes)
     if output == "-":
         typer.echo(hcl, nl=False)
     else:

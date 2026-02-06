@@ -401,7 +401,7 @@ def want_remote_check(settings: dict, explicit: str|None) -> bool:
 	return bool(settings.get("push", True))  # auto
 
 # ---------- HCL generation ----------
-def gen_hcl(settings: dict, primary_tags: dict[str,str], all_tags_map: dict[str,list[str]], targets_subset=None) -> str:
+def gen_hcl(settings: dict, primary_tags: dict[str,str], all_tags_map: dict[str,list[str]], targets_subset=None, hashes: dict[str,str]=None) -> str:
 	targets = settings["targets"]
 	subset = targets_subset or list(targets.keys())
 	out = []
@@ -415,7 +415,17 @@ def gen_hcl(settings: dict, primary_tags: dict[str,str], all_tags_map: dict[str,
 			key = f"{dep_prefix}{dep.replace('-','_').upper()}"
 			auto_args[key] = image_ref(settings, dep, primary_tags[dep])
 
-		user_args = t.get("build_args", {}) or {}
+		# Interpolate user build_args (evaluate ${...} expressions)
+		user_args = {}
+		for k, v in (t.get("build_args", {}) or {}).items():
+			if isinstance(v, str) and "${" in v and hashes:
+				# Interpolate ${...} expressions in build_args
+				def repl(m):
+					return eval_tag_expr(m.group(1), settings, tname, hashes)
+				user_args[k] = re.sub(r"\$\{([^}]+)\}", repl, v)
+			else:
+				user_args[k] = v
+
 		all_args  = {**auto_args, **user_args}
 
 		out += [
@@ -489,7 +499,9 @@ def do_build(settings: dict, args, to_build: list[str], primary_tags: dict[str,s
 	if not to_build:
 		print("Nothing to build."); return
 
-	hcl = gen_hcl(settings, primary_tags, all_tags_map, targets_subset=selected)
+	# Compute hashes for build_args interpolation
+	hashes = compute_all_hashes(settings, selected)
+	hcl = gen_hcl(settings, primary_tags, all_tags_map, targets_subset=selected, hashes=hashes)
 	tmp = Path(".bake.tmp.hcl"); tmp.write_text(hcl, encoding="utf-8")
 	try:
 		cmd = ["docker","buildx","bake","-f", str(tmp)]
@@ -646,7 +658,9 @@ def core_main(argv: list[str] | None = None):
 		return
 
 	if args.cmd == "gen-hcl":
-		hcl = gen_hcl(settings, primary_tags, all_tags_map, targets_subset=selected)
+		# Compute hashes for build_args interpolation
+		hashes = compute_all_hashes(settings, selected)
+		hcl = gen_hcl(settings, primary_tags, all_tags_map, targets_subset=selected, hashes=hashes)
 
 		if args.output == "-":
 			print(hcl, end="")
