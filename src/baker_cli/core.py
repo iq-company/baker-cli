@@ -195,8 +195,8 @@ def load_settings(path: str|None) -> dict:
 
 	# Normalize targets
 	for name, t in s["targets"].items():
-		if "dockerfile" not in t:
-			raise ValueError(f"Target '{name}' missing 'dockerfile'.")
+		# Convention: ops/build/docker/Dockerfile.{target}
+		t.setdefault("dockerfile", f"ops/build/docker/Dockerfile.{name}")
 		t.setdefault("context", ".")
 		t.setdefault("build_args", {})
 		t.setdefault("hash_files", [t["dockerfile"]])

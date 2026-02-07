@@ -1,0 +1,66 @@
+# =============================================================================
+# Build/Compile Recipes (baker-cli built-in)
+# =============================================================================
+# Generic compilation recipes for common tools.
+#
+# All recipes contain pure docker commands (no RUN prefix).
+# The caller decides how to use them:
+#   recipe("name")      → outputs "RUN <commands>"
+#   recipe_raw("name")  → outputs just the commands (for combining in one layer)
+# =============================================================================
+
+recipes:
+  # --- Build dependencies ---
+  install_build_deps:
+    debian: |
+      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+          git-core make wget gcc build-essential
+    alpine: |
+      apk add --no-cache git make wget gcc musl-dev build-base
+
+  # --- PostgreSQL psql compilation (for minimal release images) ---
+  compile_psql:
+    debian: |
+      wget https://ftp.postgresql.org/pub/source/v{{ pg_version }}/postgresql-{{ pg_version }}.tar.gz -O /tmp/postgresql.tar.gz; \
+      tar -xf /tmp/postgresql.tar.gz -C /tmp/; \
+      ln -s /tmp/postgresql-* /tmp/postgresql; \
+      cd /tmp/postgresql; \
+      ./configure --prefix=/tmp/psql --without-icu --without-server --with-ssl=openssl --without-readline --without-systemd --without-ldap; \
+      cd src/bin/psql; \
+      make && make install
+    alpine: ""
+
+  # --- PCRE2 compilation (nginx dependency) ---
+  compile_pcre2:
+    _default: |
+      wget https://github.com/PCRE2Project/pcre2/archive/refs/tags/pcre2-10.44.tar.gz -O /tmp/pcre.tar.gz; \
+      tar -xf /tmp/pcre.tar.gz -C /tmp/; \
+      ln -s /tmp/pcre2-* /tmp/pcre; \
+      cd /tmp/pcre; \
+      ./autogen.sh; \
+      ./configure --prefix=/opt/pcre2 --enable-static; \
+      make && make install
+
+  # --- nginx compilation ---
+  compile_nginx:
+    _default: |
+      wget https://nginx.org/download/nginx-{{ nginx_version }}.tar.gz -O /tmp/nginx.tar.gz; \
+      tar -xf /tmp/nginx.tar.gz -C /tmp/; \
+      ln -s /tmp/nginx-* /tmp/nginx; \
+      cd /tmp/nginx; \
+      git clone https://github.com/openresty/headers-more-nginx-module.git /tmp/nginx/modules/headers_more; \
+      ./configure \
+          --prefix=/opt/nginx \
+          --with-pcre=/tmp/pcre \
+          --user=${IMAGE_USER} \
+          --group=www-data \
+          --add-module=./modules/headers_more \
+          --with-http_ssl_module \
+          --with-http_v2_module \
+          --with-threads \
+          --with-file-aio \
+          --without-http_uwsgi_module \
+          --without-http_scgi_module \
+          --with-http_realip_module \
+          --without-http_fastcgi_module; \
+      make && make install

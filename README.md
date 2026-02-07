@@ -27,6 +27,7 @@ A small, pragmatic Python CLI that controls your Docker build cascades **uniform
 
   * [`plan`](#plan)
   * [`gen-hcl`](#gen-hcl)
+  * [`gen-docker`](#gen-docker)
   * [`build`](#build)
   * [`rm`](#rm)
   * [Global Overrides (`--set`)](#global-overrides---set)
@@ -222,19 +223,105 @@ python baker.py gen-hcl --targets cascade-base
 python baker.py gen-hcl --targets all
 ```
 
+### `gen-docker`
+
+Generate Dockerfiles from Jinja2 templates with platform-specific recipes:
+
+```bash
+# Generate Dockerfiles for debian variant (default)
+baker gen-docker
+
+# Generate for alpine variant
+baker gen-docker --variant alpine
+
+# Generate for specific targets only
+baker gen-docker --targets base dev --variant alpine
+
+# Dry-run: show what would be generated
+baker gen-docker --dry-run
+
+# Show diff against existing Dockerfiles
+baker gen-docker --diff --variant alpine
+```
+
+**Setup:**
+
+1. Add `dockerfile_template` to your targets in `build-settings.yml`:
+
+```yaml
+targets:
+  base:
+    dockerfile: docker/Dockerfile.base          # Generated output
+    dockerfile_template: docker-templates/base/Dockerfile.j2  # Source template
+    context: .
+```
+
+2. Create template files using Jinja2 syntax with recipes:
+
+```dockerfile
+# docker-templates/base/Dockerfile.j2
+FROM {{ base_image }}
+
+# Use platform-specific recipe for package installation
+{{ recipe("install_packages", packages=["curl", "ca-certificates"]) }}
+
+# Conditional recipe
+{% if has_recipe("compile_postgres") %}
+{{ recipe("compile_postgres", pg_version="16.4") }}
+{% endif %}
+```
+
+3. (Optional) Create variant-specific configs in `docker-templates/base/variants/`:
+
+```yaml
+# variants/alpine.yml
+system_packages:
+  - curl
+  - ca-certificates
+```
+
+4. (Optional) Define custom recipes in `dockerfile-recipes.yml`:
+
+```yaml
+recipes:
+  my_custom_recipe:
+    debian: |
+      RUN apt-get install -y {{ packages | join(' ') }}
+    alpine: |
+      RUN apk add {{ packages | join(' ') }}
+```
+
+**Built-in Recipes:**
+
+| Recipe | Description |
+|--------|-------------|
+| `install_packages` | Install system packages (apt/apk) |
+| `install_build_packages` | Install build dependencies |
+| `cleanup_build_packages` | Remove build dependencies |
+| `pip_install` | Install Python packages |
+| `create_user` | Create non-root user |
+| `compile_postgres` | Build minimal psql (debian only) |
+| `install_postgres_client` | Install psql via package manager |
+| `compile_nginx` | Build nginx with minimal modules (debian only) |
+| `install_nginx` | Install nginx via package manager |
+| `cleanup_caches` | Remove pip/yarn/uv caches |
+
 ### `build`
 
 Build Docker images:
 
 ```bash
 # Build locally
-python baker.py build --check local --push=off --targets cascade-base
+baker build --check local --no-push --targets base
 
 # Build and push
-python baker.py build --check registry --push=on --targets cascade-base
+baker build --check remote --push --targets base
 
-# Build with specific registry
-python baker.py build --registry my-registry.com --push=on --targets cascade-base
+# Build with Dockerfile generation (for templated projects)
+baker build --gen-docker --variant debian --targets base
+
+# Build alpine variant
+baker build --gen-docker --variant alpine --targets base
 ```
 
 ### Global Overrides (`--set`)

@@ -1,0 +1,78 @@
+# =============================================================================
+# Base Image Recipes (baker-cli built-in)
+# =============================================================================
+# These are DEFAULT recipes provided by baker-cli.
+# Projects can override these in their own recipes/ directory.
+#
+# All recipes contain pure docker commands (no RUN prefix).
+# The caller decides how to use them:
+#   recipe("name")      → outputs "RUN <commands>"
+#   recipe_raw("name")  → outputs just the commands (for combining in one layer)
+# =============================================================================
+
+recipes:
+  # --- User creation ---
+  create_user:
+    debian: |
+      groupadd -g ${GID} ${IMAGE_GROUP}; \
+      useradd -u ${UID} -g ${IMAGE_GROUP} -m -s /bin/bash ${IMAGE_USER}
+    alpine: |
+      addgroup -g ${GID} ${IMAGE_GROUP}; \
+      adduser -u ${UID} -G ${IMAGE_GROUP} -D -s /bin/sh ${IMAGE_USER}
+
+  # --- Base packages (minimal runtime dependencies) ---
+  install_base_packages:
+    debian: |
+      apt-get update && apt-get install --no-install-recommends -y \
+          wget gettext-base file wait-for-it jq
+    alpine: |
+      apk add --no-cache wget gettext file bash jq
+
+  # --- NVM + Node.js ---
+  install_nvm:
+    _default: |
+      mkdir -p ${NVM_DIR}; \
+      wget -O - https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash; \
+      . ${NVM_DIR}/nvm.sh; \
+      nvm install ${NODE_VERSION}; \
+      nvm use v${NODE_VERSION}; \
+      npm install -g yarn; \
+      nvm alias default v${NODE_VERSION}; \
+      ln -sf ${NVM_DIR}/versions/node/v${NODE_VERSION}.* ${NVM_DIR}/versions/node/v${NODE_VERSION}; \
+      rm -rf ${NVM_DIR}/.cache ${NVM_DIR}/.git*
+
+  # --- wkhtmltopdf (PDF generation) ---
+  install_wkhtmltopdf:
+    debian: |
+      if [ "$(uname -m)" = "aarch64" ]; then export ARCH=arm64; fi; \
+      if [ "$(uname -m)" = "x86_64" ]; then export ARCH=amd64; fi; \
+      downloaded_file=wkhtmltox_${WKHTMLTOPDF_VERSION}.${WKHTMLTOPDF_DISTRO}_${ARCH}.deb; \
+      wget -q https://github.com/wkhtmltopdf/packaging/releases/download/$WKHTMLTOPDF_VERSION/$downloaded_file; \
+      apt-get install -y ./$downloaded_file; \
+      rm $downloaded_file
+    alpine: |
+      echo "wkhtmltopdf not available on Alpine - PDF generation disabled"
+
+  # --- Base cleanup ---
+  cleanup_base:
+    debian: |
+      apt-get purge -y wget; \
+      apt-get autoremove -y; \
+      apt-get clean; \
+      rm -rf /var/lib/apt/lists/* /tmp/*
+    alpine: |
+      rm -rf /tmp/*
+
+  # --- Generic package installation (pass packages as parameter) ---
+  install_packages:
+    debian: |
+      apt-get update && apt-get install -y --no-install-recommends {{ packages | join(' ') }}
+    alpine: |
+      apk add --no-cache {{ packages | join(' ') }}
+
+  # --- Cleanup apt cache ---
+  cleanup_apt:
+    debian: |
+      apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    alpine: |
+      rm -rf /tmp/* /var/tmp/*

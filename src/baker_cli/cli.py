@@ -268,6 +268,109 @@ def gen_hcl_cmd(
         typer.echo(f"Wrote {output}")
 
 
+@app.command("gen-docker", help="Generate Dockerfiles from Jinja2 templates")
+def gen_docker_cmd(
+    settings: str = typer.Option("build-settings.yml", "--settings"),
+    targets: Optional[List[str]] = typer.Option(None, "--targets", help="Generate for specific targets (default: all with templates)"),
+    variant: str = typer.Option("debian", "--variant", "-v", help="Platform variant (debian, alpine, debian-trixie, ...)"),
+    set_defaults: List[str] = typer.Option([], "--set", "-s", help="Override defaults (e.g., --set python_version=3.11)"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print generated content without writing"),
+    diff: bool = typer.Option(False, "--diff", help="Show diff against existing Dockerfile"),
+):
+    from . import dockerfile_gen
+
+    s = core.load_settings(settings)
+
+    # Parse --set overrides into defaults dict
+    defaults = {}
+    for item in set_defaults:
+        if "=" not in item:
+            typer.echo(f"Invalid --set format: {item} (expected key=value)", err=True)
+            raise typer.Exit(code=2)
+        k, v = item.split("=", 1)
+        defaults[k.strip()] = v.strip()
+
+    # Check if any targets have templates (explicit or by convention)
+    all_targets = s.get("targets", {})
+    has_templates = False
+    for tname, tconfig in all_targets.items():
+        if tconfig.get("dockerfile_template"):
+            has_templates = True
+            break
+        # Convention: docker-templates/{target}/Dockerfile.j2
+        convention_path = Path("ops/build/docker-templates") / tname / "Dockerfile.j2"
+        if convention_path.exists():
+            has_templates = True
+            break
+
+    if not has_templates:
+        typer.echo("No Dockerfile templates found.", err=True)
+        typer.echo("\nExpected templates at: ops/build/docker-templates/{target}/Dockerfile.j2", err=True)
+        typer.echo("Or specify explicitly via 'dockerfile_template' in build-settings.yml", err=True)
+        raise typer.Exit(code=1)
+
+    # Get base_path from settings file location (ops/build/build-settings.yml -> project root)
+    settings_path = Path(settings).resolve()
+    base_path = settings_path.parent.parent.parent if settings_path.parent.name == "build" else Path.cwd()
+
+    # Check variant defaults (merge copier answers + project defaults)
+    copier_defaults = dockerfile_gen.load_copier_answers(base_path)
+    project_defaults = s.get("dockerfile_defaults", {})
+    merged_check = {**copier_defaults, **project_defaults, **defaults}
+
+    is_complete, missing = dockerfile_gen.check_variant_defaults(merged_check, variant)
+    if not is_complete:
+        typer.echo(f"Warning: Missing defaults for variant '{variant}': {', '.join(missing)}", err=True)
+        typer.echo("Add them to dockerfile_defaults in build-settings.yml or use --set", err=True)
+        typer.echo()
+
+    try:
+        results = dockerfile_gen.generate_all_dockerfiles(
+            settings=s,
+            variant=variant,
+            targets=targets,
+            defaults=defaults,
+            dry_run=dry_run,
+            base_path=base_path,
+        )
+    except FileNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=2)
+
+    if not results:
+        typer.echo("No Dockerfiles generated (no templates found for selected targets).")
+        return
+
+    for tname, content in results.items():
+        tconfig = all_targets[tname]
+        # Convention: ops/build/docker/Dockerfile.{target}
+        output_path = Path(tconfig.get("dockerfile", f"ops/build/docker/Dockerfile.{tname}"))
+
+        if dry_run:
+            typer.echo(f"=== {tname} → {output_path} ===")
+            typer.echo(content)
+            typer.echo()
+        elif diff and output_path.exists():
+            import difflib
+            existing = output_path.read_text(encoding="utf-8")
+            if existing != content:
+                diff_lines = difflib.unified_diff(
+                    existing.splitlines(keepends=True),
+                    content.splitlines(keepends=True),
+                    fromfile=f"{output_path} (existing)",
+                    tofile=f"{output_path} (generated)",
+                )
+                typer.echo(f"=== {tname} ===")
+                typer.echo("".join(diff_lines))
+            else:
+                typer.echo(f"{tname}: no changes")
+        else:
+            typer.echo(f"Generated {output_path} ({variant})")
+
+    if not dry_run:
+        typer.echo(f"\n✓ Generated {len(results)} Dockerfile(s) for variant '{variant}'")
+
+
 @app.command("build", help="Build the Docker images")
 def build_cmd(
     settings: str = typer.Option("build-settings.yml", "--settings"),
@@ -279,7 +382,11 @@ def build_cmd(
     check: Optional[str] = typer.Option(None, "--check"),
     push: Optional[bool] = typer.Option(None, "--push/--no-push"),
     keep_hcl: bool = typer.Option(False, "--keep-hcl", help="keep temporary .bake file"),
+    gen_docker: bool = typer.Option(False, "--gen-docker", help="Generate Dockerfiles from templates before building"),
+    variant: str = typer.Option("debian", "--variant", help="Variant for --gen-docker (debian, alpine, ...)"),
 ):
+    from . import dockerfile_gen
+
     class Args:
         pass
     args = Args()
@@ -298,6 +405,25 @@ def build_cmd(
         k, v = ov.split("=", 1)
         core.set_deep(s, k.strip(), v)
     s = core.coerce_bools(s)
+
+    # Generate Dockerfiles from templates if requested
+    if gen_docker:
+        try:
+            results = dockerfile_gen.generate_all_dockerfiles(
+                settings=s,
+                variant=variant,
+                targets=targets,
+                dry_run=False,
+            )
+            if results:
+                for tname in results:
+                    tconfig = s["targets"][tname]
+                    # Convention: ops/build/docker/Dockerfile.{target}
+                    output_path = tconfig.get("dockerfile", f"ops/build/docker/Dockerfile.{tname}")
+                    typer.echo(f"Generated {output_path} ({variant})")
+        except FileNotFoundError as e:
+            typer.echo(f"Warning: {e}", err=True)
+
     selected, primary_tags, all_tags_map, to_build, decisions = core.plan(s, args)
     core.do_build(s, args, to_build, primary_tags, all_tags_map)
 

@@ -1,0 +1,16 @@
+# Debian-specific configuration for base image
+# Default is bookworm, use --variant debian-trixie for newer version
+debian_base: bookworm
+
+system_packages:
+  - curl
+  - ca-certificates
+
+# Subvariants: use with --variant debian-trixie
+subvariants:
+  bookworm:
+    debian_base: bookworm
+  trixie:
+    debian_base: trixie
+  bullseye:
+    debian_base: bullseye

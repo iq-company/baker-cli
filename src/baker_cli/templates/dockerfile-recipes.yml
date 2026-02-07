@@ -1,0 +1,172 @@
+# =============================================================================
+# Dockerfile Recipes - Platform-specific code blocks
+# =============================================================================
+# These recipes are available in Dockerfile templates via:
+#   {{ recipe("recipe_name", arg1=value1, arg2=value2) }}
+#
+# For combining multiple recipes in ONE layer (to reduce image size):
+#   RUN set -ex; \
+#       {{ recipe_raw("install_packages", packages=["curl"]) }} && \
+#       {{ recipe_raw("cleanup_apt") }}
+#
+# Check if a recipe exists:
+#   {% if has_recipe("recipe_name") %}...{% endif %}
+#
+# Available variables (from defaults.yml or --set):
+#   {{ defaults.python_version }}  -> e.g., "3.12"
+#   {{ defaults.debian_base }}     -> e.g., "bookworm"
+#   {{ defaults.pg_version }}      -> e.g., "16.4"
+#
+# Recipes are defined per variant (debian, alpine, etc.)
+# The "_default" variant is used as fallback.
+# Subvariants like "debian-trixie" use the base variant's recipes.
+# =============================================================================
+
+recipes:
+  # --- Package Installation ---
+  # Note: For single-layer builds, use recipe_raw() and combine with &&
+  install_packages:
+    debian: |
+      RUN apt-get update && apt-get install -y --no-install-recommends \
+          {{ packages | join(' ') }} \
+          && rm -rf /var/lib/apt/lists/*
+    alpine: |
+      RUN apk add --no-cache {{ packages | join(' ') }}
+
+  # Raw versions for layer combination
+  install_packages_raw:
+    debian: |
+      apt-get update && apt-get install -y --no-install-recommends {{ packages | join(' ') }}
+    alpine: |
+      apk add --no-cache {{ packages | join(' ') }}
+
+  install_build_packages:
+    debian: |
+      RUN apt-get update && apt-get install -y --no-install-recommends \
+          {{ packages | join(' ') }}
+    alpine: |
+      RUN apk add --no-cache --virtual .build-deps {{ packages | join(' ') }}
+
+  cleanup_build_packages:
+    debian: |
+      RUN apt-get purge -y --auto-remove {{ packages | join(' ') }} \
+          && rm -rf /var/lib/apt/lists/*
+    alpine: |
+      RUN apk del .build-deps
+
+  # --- Python ---
+  pip_install:
+    _default: |
+      RUN pip install --no-cache-dir {{ packages | join(' ') }}
+
+  pip_install_requirements:
+    _default: |
+      COPY {{ requirements_file | default("requirements.txt") }} /tmp/requirements.txt
+      RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+          && rm /tmp/requirements.txt
+
+  # --- User Management ---
+  create_user:
+    _default: |
+      ARG IMAGE_USER={{ user }}
+      ARG IMAGE_UID={{ uid | default(1000) }}
+      ARG IMAGE_GID={{ gid | default(1000) }}
+      RUN groupadd -g ${IMAGE_GID} ${IMAGE_USER} \
+          && useradd -m -u ${IMAGE_UID} -g ${IMAGE_GID} ${IMAGE_USER}
+
+  # --- PostgreSQL ---
+  # Debian needs custom-compiled psql to avoid libpq bloat
+  compile_postgres:
+    debian: |
+      # Build minimal psql client (Debian apt version has too many dependencies)
+      ARG PG_VERSION={{ pg_version | default("16.4") }}
+      RUN apt-get update && apt-get install -y --no-install-recommends \
+          build-essential libreadline-dev zlib1g-dev libssl-dev \
+          && curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.gz" \
+             | tar xz -C /tmp \
+          && cd /tmp/postgresql-${PG_VERSION} \
+          && ./configure --without-icu --prefix=/usr/local \
+          && make -C src/bin/psql \
+          && make -C src/bin/psql install \
+          && cd / && rm -rf /tmp/postgresql-* \
+          && apt-get purge -y --auto-remove build-essential \
+          && rm -rf /var/lib/apt/lists/*
+    alpine: ""  # Alpine's apk postgresql-client is fine
+
+  install_postgres_client:
+    debian: ""  # Debian uses compiled version from builder stage
+    alpine: |
+      RUN apk add --no-cache postgresql16-client
+
+  # --- nginx ---
+  compile_nginx:
+    debian: |
+      # Build nginx with minimal modules
+      ARG NGINX_VERSION={{ nginx_version | default("1.27.4") }}
+      RUN apt-get update && apt-get install -y --no-install-recommends \
+          build-essential libpcre3-dev zlib1g-dev libssl-dev \
+          && curl -fsSL "http://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+             | tar xz -C /tmp \
+          && cd /tmp/nginx-${NGINX_VERSION} \
+          && ./configure --prefix=/etc/nginx \
+             --sbin-path=/usr/sbin/nginx \
+             --with-http_ssl_module \
+             --with-http_v2_module \
+             --with-http_realip_module \
+             --with-http_gzip_static_module \
+             --without-http_autoindex_module \
+             --without-http_ssi_module \
+          && make && make install \
+          && cd / && rm -rf /tmp/nginx-* \
+          && apt-get purge -y --auto-remove build-essential \
+          && rm -rf /var/lib/apt/lists/*
+    alpine: ""  # Alpine's nginx is fine
+
+  install_nginx:
+    debian: ""  # Debian uses compiled version
+    alpine: |
+      RUN apk add --no-cache nginx
+
+  # --- Cleanup ---
+  cleanup_apt:
+    debian: |
+      RUN apt-get clean \
+          && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    alpine: ""
+
+  cleanup_apt_raw:
+    debian: |
+      apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    alpine: |
+      rm -rf /tmp/* /var/tmp/*
+
+  cleanup_caches:
+    _default: |
+      RUN rm -rf \
+          {{ home_dir | default("/root") }}/.cache/pip \
+          {{ home_dir | default("/root") }}/.cache/yarn \
+          {{ home_dir | default("/root") }}/.cache/uv \
+          /tmp/*
+
+  cleanup_caches_raw:
+    _default: |
+      rm -rf {{ home_dir | default("/root") }}/.cache/pip {{ home_dir | default("/root") }}/.cache/yarn {{ home_dir | default("/root") }}/.cache/uv /tmp/*
+
+  # --- Copy from builder stage ---
+  copy_from_builder:
+    _default: |
+      {% for item in items %}
+      COPY --from={{ builder_stage | default("builder") }} {{ item.src }} {{ item.dst }}
+      {% endfor %}
+
+  # =============================================================================
+  # LAYER COMBINATION EXAMPLE
+  # =============================================================================
+  # To combine multiple operations in a single layer:
+  #
+  # RUN set -ex; \
+  #     {{ recipe_raw("install_packages_raw", packages=["curl", "git"]) }} && \
+  #     curl -fsSL https://example.com/install.sh | sh && \
+  #     {{ recipe_raw("cleanup_apt_raw") }} && \
+  #     {{ recipe_raw("cleanup_caches_raw", home_dir="/home/myuser") }}
+  # =============================================================================

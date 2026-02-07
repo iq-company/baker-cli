@@ -1,0 +1,4 @@
+# Alpine-specific configuration for base image
+system_packages:
+  - curl
+  - ca-certificates
