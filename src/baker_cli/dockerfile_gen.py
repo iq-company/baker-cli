@@ -158,19 +158,42 @@ class DockerfileGenerator:
         self.env.globals["base_image"] = base_image
         self.env.globals["defaults"] = self.defaults
 
+        # Expose each default as top-level variable for convenience
+        # (allows {{ project_slug }} in addition to {{ defaults.project_slug }})
+        for k, v in self.defaults.items():
+            if k not in self.env.globals:  # Don't override existing globals
+                self.env.globals[k] = v
+
         # Layer helper for combining multiple commands
         self.env.globals["layer_start"] = lambda: "RUN set -ex; \\"
         self.env.globals["layer_join"] = lambda: " && \\"
 
     def _recipe_func(self, name: str, **kwargs) -> str:
-        """Jinja2 function to include a recipe (with RUN prefix)."""
+        """Jinja2 function to include a recipe (with RUN prefix).
+
+        Leading comment lines are moved before the RUN instruction to prevent
+        broken Dockerfile syntax (e.g., "RUN # comment\\nchmod ..." would make
+        "chmod" an orphaned instruction).
+        """
         # Merge defaults into kwargs (kwargs take precedence)
         merged = {**self.defaults, **kwargs}
         content = self.registry.get(name, self.base_variant, **merged)
         # Add RUN prefix if not empty and doesn't have one
         content = content.rstrip()
         if content and not content.startswith("RUN ") and not content.startswith("COPY "):
-            content = "RUN " + content
+            # Separate leading comment lines from commands
+            lines = content.split("\n")
+            leading_comments: list[str] = []
+            while lines and lines[0].strip().startswith("#"):
+                leading_comments.append(lines.pop(0))
+
+            cmd_content = "\n".join(lines).strip()
+            if cmd_content:
+                prefix = "\n".join(leading_comments) + "\n" if leading_comments else ""
+                content = prefix + "RUN " + cmd_content
+            elif leading_comments:
+                # Only comments, no commands — output as Dockerfile comments
+                content = "\n".join(leading_comments)
         return content
 
     def _recipe_raw_func(self, name: str, **kwargs) -> str:
