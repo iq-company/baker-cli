@@ -163,14 +163,99 @@ def deep_interpolate(node):
 		return interpolate_scalar(node)
 	return node
 
+# ---------- env files ----------
+def parse_env_file(path: Path) -> dict:
+	"""Parse a dotenv-style file into a dict.
+
+	Supported syntax (kept intentionally simple):
+	  - KEY=VALUE lines
+	  - optional leading 'export '
+	  - '#' comments and blank lines are ignored
+	  - surrounding single/double quotes around the value are stripped
+	No variable interpolation is performed inside the file.
+	"""
+	result: dict[str, str] = {}
+	for line in path.read_text(encoding="utf-8").splitlines():
+		line = line.strip()
+		if not line or line.startswith("#"):
+			continue
+		if line.startswith("export "):
+			line = line[len("export "):].lstrip()
+		if "=" not in line:
+			continue
+		k, v = line.split("=", 1)
+		k = k.strip()
+		v = v.strip()
+		if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or (v[0] == "'" and v[-1] == "'")):
+			v = v[1:-1]
+		if k:
+			result[k] = v
+	return result
+
+
+def apply_env_files(paths, base_dir: Path = Path(".")) -> list[str]:
+	"""Merge dotenv-style files into os.environ so that env() can resolve them.
+
+	Precedence (dotenv convention): the real process/CI environment always wins.
+	Among files, later files override earlier ones. Missing files are skipped
+	silently (env files are optional by design). Returns the list of files that
+	were actually loaded.
+	"""
+	merged: dict[str, str] = {}
+	loaded: list[str] = []
+	for raw_p in paths:
+		if not raw_p:
+			continue
+		p = Path(raw_p)
+		if not p.is_absolute():
+			p = base_dir / p
+		if p.exists():
+			merged.update(parse_env_file(p))
+			loaded.append(str(p))
+	# setdefault => existing process/CI env wins over file values
+	for k, v in merged.items():
+		os.environ.setdefault(k, v)
+	return loaded
+
+
+def _collect_env_files(raw: dict, extra_env_files=None) -> list[str]:
+	"""Build the ordered list of env files from settings + extra (CLI) sources.
+
+	Settings-declared files come first, CLI-provided files last (so CLI files
+	override settings files among file sources). Each entry is interpolated so
+	expressions like ops/env/.env.${env("STAGE_NAME")} are supported.
+	"""
+	files: list[str] = []
+	ef = raw.get("env_files")
+	if ef:
+		if isinstance(ef, str):
+			ef = [ef]
+		files.extend(ef)
+	if extra_env_files:
+		files.extend(extra_env_files)
+	# Interpolate ${...} in paths (resolves env()/concat()/... against current env)
+	resolved = []
+	for entry in files:
+		entry = str(entry)
+		resolved.append(interpolate_scalar(entry) if "${" in entry else entry)
+	return resolved
+
+
 # ---------- settings load ----------
-def load_settings(path: str|None) -> dict:
+def load_settings(path: str|None, extra_env_files=None) -> dict:
 	s = dict(DEFAULT_SETTINGS)
 	p = path or "build-settings.yml"
 	with open(p, "r", encoding="utf-8") as f:
 		raw = yaml.safe_load(f) or {}
 		if not isinstance(raw, dict):
 			raise ValueError("settings file must be a mapping at top level.")
+
+	# Load env files BEFORE interpolation so that env() can resolve their values.
+	# Process/CI environment keeps precedence (see apply_env_files).
+	env_files = _collect_env_files(raw, extra_env_files)
+	if env_files:
+		apply_env_files(env_files)
+
 	# First-pass interpolate (for registry/owner/etc.)
 	raw = deep_interpolate(raw)
 	# Deep-merge nested sections
@@ -601,6 +686,7 @@ def select_targets(settings: dict, names: list[str] | None) -> list[str]:
 def core_main(argv: list[str] | None = None):
 	ap = argparse.ArgumentParser(prog="baker", description="Docker build target planner (YAML-defined).")
 	ap.add_argument("--settings", default="build-settings.yml", help="Path to settings.yml (default: build-settings.yml)")
+	ap.add_argument("--env-file", dest="env_files", action="append", default=[], help="Load dotenv-style file(s) into env() resolution (repeatable). Process env still wins.")
 	ap.add_argument("--set", dest="overrides", action="append", default=[], help="Override config property, e.g. --set push=false or --set targets.srv.latest=false")
 	sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -625,7 +711,7 @@ def core_main(argv: list[str] | None = None):
 	tgt_opts(p_build)
 
 	args = ap.parse_args(argv)
-	s_settings = load_settings(args.settings)
+	s_settings = load_settings(args.settings, extra_env_files=getattr(args, "env_files", None))
 	settings = s_settings
 
 	# apply --set overrides

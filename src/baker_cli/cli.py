@@ -179,6 +179,7 @@ def ci_cmd(
 def plan_cmd(
     settings: str = typer.Option("build-settings.yml", "--settings", help="Path to settings.yml (default: build-settings.yml)"),
     set_override: List[str] = typer.Option([], "--set", help="Override config property, e.g. --set push=false or --set targets.srv.latest=false"),
+    env_file: List[str] = typer.Option([], "--env-file", help="Load dotenv-style file(s) into env() resolution (repeatable). Process env still wins."),
     targets: Optional[List[str]] = typer.Option(None, "--targets", help="targets (default: all)"),
     force: List[str] = typer.Option([], "--force", help="force specific targets"),
     skip: List[str] = typer.Option([], "--skip", help="skip specific targets"),
@@ -200,7 +201,7 @@ def plan_cmd(
     args.json = json_out
     args.print_env = print_env
     args.overrides = set_override
-    s = core.load_settings(settings)
+    s = core.load_settings(settings, extra_env_files=env_file)
     # apply overrides and coerce
     for ov in set_override:
         if "=" not in ov:
@@ -231,6 +232,7 @@ def plan_cmd(
 def gen_hcl_cmd(
     settings: str = typer.Option("build-settings.yml", "--settings"),
     set_override: List[str] = typer.Option([], "--set"),
+    env_file: List[str] = typer.Option([], "--env-file", help="Load dotenv-style file(s) into env() resolution (repeatable). Process env still wins."),
     targets: Optional[List[str]] = typer.Option(None, "--targets"),
     force: List[str] = typer.Option([], "--force"),
     skip: List[str] = typer.Option([], "--skip"),
@@ -249,7 +251,7 @@ def gen_hcl_cmd(
     args.check = check
     args.push = push
     args.overrides = set_override
-    s = core.load_settings(settings)
+    s = core.load_settings(settings, extra_env_files=env_file)
     for ov in set_override:
         if "=" not in ov:
             raise typer.Exit(code=2)
@@ -274,12 +276,13 @@ def gen_docker_cmd(
     targets: Optional[List[str]] = typer.Option(None, "--targets", help="Generate for specific targets (default: all with templates)"),
     variant: str = typer.Option("debian", "--variant", "-v", help="Platform variant (debian, alpine, debian-trixie, ...)"),
     set_defaults: List[str] = typer.Option([], "--set", "-s", help="Override defaults (e.g., --set python_version=3.11)"),
+    env_file: List[str] = typer.Option([], "--env-file", help="Load dotenv-style file(s) into env() resolution (repeatable). Process env still wins."),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print generated content without writing"),
     diff: bool = typer.Option(False, "--diff", help="Show diff against existing Dockerfile"),
 ):
     from . import dockerfile_gen
 
-    s = core.load_settings(settings)
+    s = core.load_settings(settings, extra_env_files=env_file)
 
     # Parse --set overrides into defaults dict
     defaults = {}
@@ -375,6 +378,7 @@ def gen_docker_cmd(
 def build_cmd(
     settings: str = typer.Option("build-settings.yml", "--settings"),
     set_override: List[str] = typer.Option([], "--set"),
+    env_file: List[str] = typer.Option([], "--env-file", help="Load dotenv-style file(s) into env() resolution (repeatable). Process env still wins."),
     targets: Optional[List[str]] = typer.Option(None, "--targets"),
     force: List[str] = typer.Option([], "--force"),
     skip: List[str] = typer.Option([], "--skip"),
@@ -398,7 +402,7 @@ def build_cmd(
     args.push = push
     args.overrides = set_override
     args.keep_hcl = keep_hcl
-    s = core.load_settings(settings)
+    s = core.load_settings(settings, extra_env_files=env_file)
     for ov in set_override:
         if "=" not in ov:
             raise typer.Exit(code=2)
@@ -432,6 +436,7 @@ def build_cmd(
 def rm_cmd(
     settings: str = typer.Option("build-settings.yml", "--settings"),
     set_override: List[str] = typer.Option([], "--set"),
+    env_file: List[str] = typer.Option([], "--env-file", help="Load dotenv-style file(s) into env() resolution (repeatable). Process env still wins."),
     targets: Optional[List[str]] = typer.Option(None, "--targets", help="targets (default: all)"),
     all_tags: bool = typer.Option(False, "--all-tags/--primary-only", help="remove all tags or only primary tag per target"),
     do_rm: bool = typer.Option(False, "--rm", help="Dry Run, if not set explicitly"),
@@ -443,7 +448,7 @@ def rm_cmd(
     args.targets = targets
     args.overrides = set_override
 
-    s = core.load_settings(settings)
+    s = core.load_settings(settings, extra_env_files=env_file)
     for ov in set_override:
         if "=" not in ov:
             raise typer.Exit(code=2)

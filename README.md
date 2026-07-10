@@ -21,6 +21,7 @@ A small, pragmatic Python CLI that controls your Docker build cascades **uniform
   * [Targets](#targets)
   * [Bundles](#bundles)
   * [Interpolation & Expressions](#interpolation--expressions)
+  * [Env Files (`env_files` / `--env-file`)](#env-files-env_files----env-file)
   * [Tag Expressions (Functions)](#tag-expressions-functions)
   * [Build-Args & Hashing](#build-args--hashing)
 * [CLI](#cli)
@@ -168,6 +169,45 @@ targets:
       VERSION: "{{ env.BUILD_VERSION }}"
       COMMIT_SHA: "{{ git.full_sha }}"
 ```
+
+### Env Files (`env_files` / `--env-file`)
+
+`env()` expressions resolve against the process environment. To keep builds
+self-contained (independent of any shell/CI wiring), baker can load one or more
+dotenv-style files and merge them into that resolution scope.
+
+Declare them in `build-settings.yml` and/or pass them on the CLI:
+
+```yaml
+# build-settings.yml
+env_files:
+  - ops/env/.env                        # always loaded (if present)
+  - ops/env/.env.${env("STAGE_NAME")}   # path itself may be interpolated
+
+targets:
+  base:
+    build_args:
+      # Value now comes from the env file(s) above (optional override)
+      BASE_IMAGE_SOURCE: ${env("BASE_IMAGE_SOURCE","")}
+```
+
+```bash
+# Append additional files ad-hoc (repeatable). Works on plan/gen-hcl/gen-docker/build/rm.
+baker build --targets base --env-file ops/env/.env --env-file ops/env/.env.staging
+```
+
+Rules:
+
+* **Paths** are resolved relative to the current working directory. Non-existent
+  files are **skipped silently** (env files are optional by design).
+* **Precedence:** the real **process/CI environment always wins** over file
+  values (dotenv convention). Among files, **later files override earlier** ones;
+  CLI `--env-file` entries are applied after the settings-declared `env_files`.
+* **Scope:** loaded variables only feed `env()` resolution (registry, owner,
+  tags, build_args). They do **not** get injected into the Docker build unless
+  explicitly referenced via a `build_args` entry (so no accidental secret leaks).
+* **Format:** `KEY=VALUE` lines, optional leading `export `, `#` comments and
+  blank lines ignored, surrounding quotes stripped. No in-file interpolation.
 
 ### Tag Expressions (Functions)
 
